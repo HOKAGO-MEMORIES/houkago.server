@@ -1,12 +1,14 @@
 package com.hokagomemories.houkagoserver.service;
 
 import com.hokagomemories.houkagoserver.config.GitHubApiConfig;
+import com.hokagomemories.houkagoserver.dto.PostMetadata;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.List;
 
 @Service
 public class GitHubService {
@@ -17,6 +19,11 @@ public class GitHubService {
     public GitHubService() {
         this.gitHubApiConfig = new GitHubApiConfig();
         this.restTemplate = new RestTemplate();
+    }
+
+    public List<PostMetadata> getPostsList(String category) throws IOException {
+
+        return ;
     }
 
     public String getFileContent(String path) throws IOException {
