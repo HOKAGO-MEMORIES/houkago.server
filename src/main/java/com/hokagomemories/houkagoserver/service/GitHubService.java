@@ -1,6 +1,6 @@
 package com.hokagomemories.houkagoserver.service;
 
-import com.hokagomemories.houkagoserver.repository.GitHubApiConfig;
+import com.hokagomemories.houkagoserver.config.GitHubApiConfig;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;

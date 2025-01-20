@@ -1,4 +1,4 @@
-package com.hokagomemories.houkagoserver.repository;
+package com.hokagomemories.houkagoserver.config;
 
 import io.github.cdimascio.dotenv.Dotenv;
 import lombok.Getter;
