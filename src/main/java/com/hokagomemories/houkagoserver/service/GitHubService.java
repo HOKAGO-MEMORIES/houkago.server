@@ -66,7 +66,8 @@ public class GitHubService {
     }
 
     public byte[] getImage(String category, String slug, String filename) throws IOException {
-        String path = category + "/" + slug + "/assets/" + filename;
+        String normalizedFilename = normalizeImagePath(filename);
+        String path = category + "/" + slug + "/" + normalizedFilename;
         String apiUrl = gitHubApiConfig.getGithubApiUrl() + "/contents/" + path;
         HttpEntity<String> entity = new HttpEntity<>(createHeaders());
 
@@ -85,6 +86,19 @@ public class GitHubService {
         String cleanedContent = encodedContent.replaceAll("\\s", "");
         byte[] decodedBytes = Base64.getDecoder().decode(cleanedContent);
         return new String(decodedBytes);
+    }
+
+    private String normalizeImagePath(String path) {
+        // ./assets/image.png -> assets/image.png
+        // ../assets/image.png -> assets/image.png
+        // assets/image.png -> assets/image.png
+        if (path.startsWith("./")) {
+            return path.substring(2);
+        }
+        if (path.startsWith("../")) {
+            return path.substring(3);
+        }
+        return path;
     }
 
     private HttpHeaders createHeaders() {
@@ -125,7 +139,7 @@ public class GitHubService {
                         builder.from(value);
                         break;
                     case "thumbnail":
-                        builder.thumbnail(value);
+                        builder.thumbnail(normalizeImagePath(value));
                         break;
                 }
             }
