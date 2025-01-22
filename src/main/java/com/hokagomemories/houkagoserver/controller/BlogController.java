@@ -3,8 +3,10 @@ package com.hokagomemories.houkagoserver.controller;
 import com.hokagomemories.houkagoserver.dto.PostMetadata;
 import com.hokagomemories.houkagoserver.service.FileService;
 import com.hokagomemories.houkagoserver.service.GitHubService;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -48,6 +50,11 @@ public class BlogController {
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(contentType))
                 .body(image);
+    }
+
+    @ExceptionHandler(FileNotFoundException.class)
+    public ResponseEntity<String> handleFileNotFoundException(FileNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
