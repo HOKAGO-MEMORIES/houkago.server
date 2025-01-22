@@ -3,7 +3,6 @@ package com.hokagomemories.houkagoserver.service;
 import com.hokagomemories.houkagoserver.config.GitHubApiConfig;
 import com.hokagomemories.houkagoserver.dto.GitHubContent;
 import com.hokagomemories.houkagoserver.dto.PostMetadata;
-import java.io.FileNotFoundException;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Objects;
@@ -61,13 +60,9 @@ public class GitHubService {
                 GitHubContent.class
         );
 
-        GitHubContent content = response.getBody();
-        if (content == null || content.getContent() == null) {
-            throw new FileNotFoundException("Post content not found: " + path);
-        }
-
-        String decodedContent = new String(Base64.getDecoder().decode(Objects.requireNonNull(content).getContent()));
-        return parsePostContent(decodedContent, slug);
+        String encodedContent = Objects.requireNonNull(response.getBody()).getContent();
+        String content = decodeBase64Content(encodedContent);
+        return parsePostContent(content, slug);
     }
 
     public byte[] getImage(String category, String slug, String filename) throws IOException {
@@ -82,11 +77,14 @@ public class GitHubService {
                 GitHubContent.class
         );
 
-        GitHubContent content = response.getBody();
-        if (content == null || content.getContent() == null) {
-            throw new FileNotFoundException("Image not found: " + path);
-        }
-        return Base64.getDecoder().decode(Objects.requireNonNull(content).getContent());
+        String encodedContent = Objects.requireNonNull(response.getBody()).getContent();
+        return Base64.getDecoder().decode(encodedContent.replaceAll("\\s", ""));
+    }
+
+    private String decodeBase64Content(String encodedContent) {
+        String cleanedContent = encodedContent.replaceAll("\\s", "");
+        byte[] decodedBytes = Base64.getDecoder().decode(cleanedContent);
+        return new String(decodedBytes);
     }
 
     private HttpHeaders createHeaders() {
