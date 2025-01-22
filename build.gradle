@@ -33,6 +33,13 @@ dependencies {
     implementation 'io.github.cdimascio:dotenv-java:3.1.0'
 }
 
+test {
+    jvmArgs = [
+            "-javaagent:${classpath.find { it.name.contains('byte-buddy-agent') }.absolutePath}"
+    ]
+}
+
+
 tasks.named('test') {
     useJUnitPlatform()
 }
