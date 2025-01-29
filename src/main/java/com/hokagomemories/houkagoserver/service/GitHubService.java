@@ -135,8 +135,8 @@ public class GitHubService {
                     case "desc":
                         builder.desc(value);
                         break;
-                    case "from":
-                        builder.from(value);
+                    case "category":
+                        builder.category(value);
                         break;
                     case "thumbnail":
                         builder.thumbnail(normalizeImagePath(value));

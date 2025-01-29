@@ -3,6 +3,7 @@ package com.hokagomemories.houkagoserver.controller;
 import com.hokagomemories.houkagoserver.dto.PostMetadata;
 import com.hokagomemories.houkagoserver.service.FileService;
 import com.hokagomemories.houkagoserver.service.GitHubService;
+import com.hokagomemories.houkagoserver.service.JsonGenerationService;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +21,17 @@ public class BlogController {
 
     private final GitHubService gitHubService;
     private final FileService fileService;
+    private final JsonGenerationService jsonGenerationService;
+
+    @PostMapping("/generate-json")
+    public ResponseEntity<String> generateJson() throws IOException {
+        List<PostMetadata> blogPosts = gitHubService.getPostsList("blog");
+        List<PostMetadata> psPosts = gitHubService.getPostsList("ps");
+
+        jsonGenerationService.generateJson(blogPosts, psPosts);
+
+        return ResponseEntity.ok("JSON files generate successfully");
+    }
 
     @GetMapping("/posts/{category}")
     public ResponseEntity<List<PostMetadata>> getPostsList(
