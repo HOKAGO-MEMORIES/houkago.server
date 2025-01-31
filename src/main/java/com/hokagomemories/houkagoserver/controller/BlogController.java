@@ -6,6 +6,7 @@ import com.hokagomemories.houkagoserver.service.GitHubService;
 import com.hokagomemories.houkagoserver.service.JsonGenerationService;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -24,11 +25,16 @@ public class BlogController {
     private final JsonGenerationService jsonGenerationService;
 
     @PostMapping("/generate-json")
-    public ResponseEntity<String> generateJson() throws IOException {
+    public ResponseEntity<String> generateJson(@RequestBody Map<String, String> request) throws IOException {
+        String blogRoot = request.get("blogRoot");
+        if (blogRoot == null || blogRoot.isBlank()) {
+            return ResponseEntity.badRequest().body("Missing 'blogRoot' in request body");
+        }
+
         List<PostMetadata> blogPosts = gitHubService.getPostsList("blog");
         List<PostMetadata> psPosts = gitHubService.getPostsList("ps");
 
-        jsonGenerationService.generateJson(blogPosts, psPosts);
+        jsonGenerationService.generateFiles(blogRoot, blogPosts, psPosts);
 
         return ResponseEntity.ok("JSON files generate successfully");
     }
