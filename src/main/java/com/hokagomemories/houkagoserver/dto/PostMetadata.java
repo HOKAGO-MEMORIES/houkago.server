@@ -12,6 +12,6 @@ public class PostMetadata {
     private String category;
     private String slug;
     private String thumbnail;
-    private String content;
+    private String body;
     private String permalink;
 }

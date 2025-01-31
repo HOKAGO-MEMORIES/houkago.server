@@ -114,7 +114,7 @@ public class GitHubService {
 
         PostMetadata.PostMetadataBuilder builder = PostMetadata.builder()
                 .slug(slug)
-                .content(content);
+                .body(content);
 
         if (matcher.find()) {
             String frontMatter = matcher.group(1);
