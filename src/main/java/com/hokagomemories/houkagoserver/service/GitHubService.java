@@ -96,8 +96,9 @@ public class GitHubService {
         Matcher matcher = pattern.matcher(content);
 
         PostMetadata.PostMetadataBuilder builder = PostMetadata.builder()
-                .slug(slug)
-                .body(content);
+                .slug(slug);
+
+        String bodyContent = content;
 
         if (matcher.find()) {
             String frontMatter = matcher.group(1);
@@ -126,8 +127,11 @@ public class GitHubService {
                         break;
                 }
             }
+
+            bodyContent = content.substring(matcher.end()).trim();
         }
 
+        builder.body(bodyContent);
         return builder.build();
     }
 }
