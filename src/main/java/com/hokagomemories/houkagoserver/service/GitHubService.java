@@ -65,23 +65,6 @@ public class GitHubService {
         return parsePostContent(content, slug);
     }
 
-    public byte[] getImage(String category, String slug, String filename) throws IOException {
-        String normalizedFilename = normalizeImagePath(filename);
-        String path = category + "/" + slug + "/" + normalizedFilename;
-        String apiUrl = gitHubApiConfig.getGithubApiUrl() + "/contents/" + path;
-        HttpEntity<String> entity = new HttpEntity<>(createHeaders());
-
-        ResponseEntity<GitHubContent> response = restTemplate.exchange(
-                apiUrl,
-                HttpMethod.GET,
-                entity,
-                GitHubContent.class
-        );
-
-        String encodedContent = Objects.requireNonNull(response.getBody()).getContent();
-        return Base64.getDecoder().decode(encodedContent.replaceAll("\\s", ""));
-    }
-
     private String decodeBase64Content(String encodedContent) {
         String cleanedContent = encodedContent.replaceAll("\\s", "");
         byte[] decodedBytes = Base64.getDecoder().decode(cleanedContent);
