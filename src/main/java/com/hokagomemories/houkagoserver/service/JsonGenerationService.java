@@ -24,7 +24,8 @@ public class JsonGenerationService {
     }
 
     public void generateFiles(String blogRoot, List<PostMetadata> blogPosts, List<PostMetadata> psPosts) throws IOException {
-        String outputDir = blogRoot + OUTPUT_DIR;
+        String normalizeRoot = normalizePath(blogRoot);
+        String outputDir = normalizeRoot + OUTPUT_DIR;
         createDirectories(outputDir);
         System.out.println("Directory created at: " + outputDir);
 
@@ -39,6 +40,20 @@ public class JsonGenerationService {
 
         generateIndexTs(outputDir);
         generateIndexDts(outputDir);
+    }
+
+    private String normalizePath(String path) {
+        path = path.replace("\\", "/");
+
+        if (path.startsWith("/app/")) {
+            path = path.substring(5);
+        }
+
+        if (path.contains("/vercel/path0")) {
+            path = path.replace("/vercel/path0", "");
+        }
+
+        return path;
     }
 
     private void createDirectories(String outputDir) throws IOException {
@@ -90,7 +105,7 @@ public class JsonGenerationService {
 
     private String transformMarkdownImagePaths(String content, String category, String slug) {
         return content.replaceAll(
-                "!\\[[^\\]]*\\]\\((\\./|\\.\\./)?(assets/[^)]+)\\)",
+                "!\\[[^]]*]\\((\\./|\\.\\./)?(assets/[^)]+)\\)",
                 String.format("![](%s/%s/%s/$2)", BASE_URL, category, slug)
         );
     }
