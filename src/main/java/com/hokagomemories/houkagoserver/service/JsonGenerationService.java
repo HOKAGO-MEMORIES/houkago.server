@@ -3,12 +3,13 @@ package com.hokagomemories.houkagoserver.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hokagomemories.houkagoserver.config.GitHubApiConfig;
 import com.hokagomemories.houkagoserver.dto.PostMetadata;
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -16,60 +17,50 @@ public class JsonGenerationService {
     private final ObjectMapper objectMapper;
     private final GitHubApiConfig gitHubApiConfig = new GitHubApiConfig();
 
-    private static final String OUTPUT_DIR = "/.posts";
+    private static final String FILES_DIR = "/app/files";
     private final String BASE_URL = gitHubApiConfig.getGithubImageUrl();
 
     public JsonGenerationService() {
         this.objectMapper = new ObjectMapper();
     }
 
-    public void generateFiles(String blogRoot, List<PostMetadata> blogPosts, List<PostMetadata> psPosts) throws IOException {
-        String normalizeRoot = normalizePath(blogRoot);
-        String outputDir = normalizeRoot + OUTPUT_DIR;
-        createDirectories(outputDir);
-        System.out.println("Directory created at: " + outputDir);
+    public List<String> generateFiles(List<PostMetadata> blogPosts, List<PostMetadata> psPosts) throws IOException {
+        Path filesDir = Paths.get(FILES_DIR);
+        createDirectories(filesDir);
 
-        File blogFile = new File(outputDir + "/blogPosts.json");
-        File psFile = new File(outputDir + "/psPosts.json");
-
-        objectMapper.writeValue(blogFile, transformPosts(blogPosts, "blog"));
-        objectMapper.writeValue(psFile, transformPosts(psPosts, "ps"));
-
-        System.out.println("Files generated at: " + blogFile.getAbsolutePath());
-        System.out.println("Files generated at: " + psFile.getAbsolutePath());
-
-        generateIndexTs(outputDir);
-        generateIndexDts(outputDir);
+        return Stream.of(
+                generateJsonFile("blogPosts.json", transformPosts(blogPosts, "blog")),
+                generateJsonFile("psPosts.json", transformPosts(psPosts, "ps")),
+                generateIndexTs(),
+                generateIndexDts()
+        ).collect(Collectors.toList());
     }
 
-    private String normalizePath(String path) {
-        path = path.replace("\\", "/");
-
-        if (path.startsWith("/app/")) {
-            path = path.substring(5);
+    private void createDirectories(Path filesDir) throws IOException {
+        if (!Files.exists(filesDir)) {
+            Files.createDirectories(filesDir);
         }
-
-        if (path.contains("/vercel/path0")) {
-            path = path.replace("/vercel/path0", "");
-        }
-
-        return path;
     }
 
-    private void createDirectories(String outputDir) throws IOException {
-        Files.createDirectories(Path.of(outputDir));
+    private String generateJsonFile(String fileName, Object content) throws IOException {
+        Path filePath = Paths.get(FILES_DIR, fileName);
+        objectMapper.writeValue(filePath.toFile(), content);
+        return fileName;
     }
 
-    private void generateIndexTs(String outputDir) throws IOException {
+    private String generateIndexTs() throws IOException {
+        String fileName = "index.ts";
         String content = """
                 export { default as blogPosts } from './blogPosts.json'
                 export { default as psPosts } from './psPosts.json'
                 """;
 
-        Files.writeString(Path.of(outputDir + "/index.ts"), content);
+        Files.writeString(Path.of(FILES_DIR, fileName), content);
+        return fileName;
     }
 
-    private void generateIndexDts(String outputDir) throws IOException {
+    private String generateIndexDts() throws IOException {
+        String fileName = "index.d.ts";
         String content = """
                 import type { Post } from '../src/types/post.ts'
                 
@@ -80,7 +71,8 @@ public class JsonGenerationService {
                 export declare const psPosts: PS[]
                 """;
 
-        Files.writeString(Path.of(outputDir + "/index.d.ts"), content);
+        Files.writeString(Paths.get(FILES_DIR, fileName), content);
+        return fileName;
     }
 
 
