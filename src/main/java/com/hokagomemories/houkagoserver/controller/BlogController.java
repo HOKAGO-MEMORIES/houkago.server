@@ -3,13 +3,16 @@ package com.hokagomemories.houkagoserver.controller;
 import com.hokagomemories.houkagoserver.dto.PostMetadata;
 import com.hokagomemories.houkagoserver.service.GitHubService;
 import com.hokagomemories.houkagoserver.service.JsonGenerationService;
-import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.util.Map;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.core.io.Resource;
 
 import java.util.List;
 
@@ -22,32 +25,35 @@ public class BlogController {
     private final JsonGenerationService jsonGenerationService;
 
     @PostMapping("/generate-json")
-    public ResponseEntity<String> generateJson(@RequestBody Map<String, String> request) throws IOException {
-        String blogRoot = request.get("blogRoot");
-        if (blogRoot == null || blogRoot.isBlank()) {
-            return ResponseEntity.badRequest().body("Missing 'blogRoot' in request body");
+    public ResponseEntity<List<String>> generateJson() {
+        try {
+            List<PostMetadata> blogPosts = gitHubService.getPostsList("blog");
+            List<PostMetadata> psPosts = gitHubService.getPostsList("ps");
+
+            List<String> fileNames = jsonGenerationService.generateFiles(blogPosts, psPosts);
+            return ResponseEntity.ok(fileNames);
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError().build();
         }
-
-        List<PostMetadata> blogPosts = gitHubService.getPostsList("blog");
-        List<PostMetadata> psPosts = gitHubService.getPostsList("ps");
-
-        jsonGenerationService.generateFiles(blogRoot, blogPosts, psPosts);
-
-        return ResponseEntity.ok("JSON files generate successfully");
     }
 
-    @ExceptionHandler(FileNotFoundException.class)
-    public ResponseEntity<String> handleFileNotFoundException(FileNotFoundException ex) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ex.getMessage());
-    }
+    @GetMapping("/files/{fileName}")
+    public ResponseEntity<Resource> downloadFile(@PathVariable String fileName) {
+        try {
+            String FILES_DIR = "/app/files/";
+            Path filePath = Paths.get(FILES_DIR + fileName);
+            Resource resource = new FileSystemResource(filePath.toFile());
 
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<String> handleIllegalArgumentException(IllegalArgumentException e) {
-        return ResponseEntity.badRequest().body(e.getMessage());
-    }
+            if (!resource.exists()) {
+                return ResponseEntity.notFound().build();
+            }
 
-    @ExceptionHandler(IOException.class)
-    public ResponseEntity<String> handleIOException(IOException e) {
-        return ResponseEntity.internalServerError().body("Server error occurred");
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                    .body(resource);
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 }
