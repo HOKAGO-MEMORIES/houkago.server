@@ -14,3 +14,9 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
     show-sql: true
+
+github:
+  api-url: ${GITHUB_API_URL}
+  token: ${GITHUB_TOKEN}
+  image-url: ${GITHUB_IMAGE_URL}
+  allowed-origins: ${ALLOWED_ORIGINS}

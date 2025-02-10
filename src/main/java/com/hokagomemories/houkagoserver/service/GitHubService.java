@@ -27,7 +27,7 @@ public class GitHubService {
     }
 
     public List<PostMetadata> getPostsList(String category) throws IOException {
-        String apiUrl = gitHubApiConfig.getGithubApiUrl() + "/contents/" + category;
+        String apiUrl = gitHubApiConfig.getApiUrl() + "/contents/" + category;
         HttpEntity<String> entity = new HttpEntity<>(createHeaders());
 
         ResponseEntity<GitHubContent[]> response = restTemplate.exchange(
@@ -50,7 +50,7 @@ public class GitHubService {
 
     public PostMetadata getPost(String category, String slug) throws IOException {
         String path = category + "/" + slug + "/" + slug + ".mdx";
-        String apiUrl = gitHubApiConfig.getGithubApiUrl() + "/contents/" + path;
+        String apiUrl = gitHubApiConfig.getApiUrl() + "/contents/" + path;
         HttpEntity<String> entity = new HttpEntity<>(createHeaders());
 
         ResponseEntity<GitHubContent> response = restTemplate.exchange(
@@ -86,7 +86,7 @@ public class GitHubService {
 
     private HttpHeaders createHeaders() {
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "token " + gitHubApiConfig.getGithubToken());
+        headers.set("Authorization", "token " + gitHubApiConfig.getToken());
         headers.set("Accept", "application/vnd.github.v3+json");
         return headers;
     }
