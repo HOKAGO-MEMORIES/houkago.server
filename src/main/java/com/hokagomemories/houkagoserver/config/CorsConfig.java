@@ -6,7 +6,11 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 @Configuration
 public class CorsConfig implements WebMvcConfigurer {
-    private final GitHubApiConfig gitHubApiConfig = new GitHubApiConfig();
+    private final GitHubApiConfig gitHubApiConfig;
+
+    public CorsConfig(GitHubApiConfig gitHubApiConfig) {
+        this.gitHubApiConfig = gitHubApiConfig;
+    }
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
