@@ -21,8 +21,8 @@ public class GitHubService {
     private final GitHubApiConfig gitHubApiConfig;
     private final RestTemplate restTemplate;
 
-    public GitHubService() {
-        this.gitHubApiConfig = new GitHubApiConfig();
+    public GitHubService(GitHubApiConfig gitHubApiConfig) {
+        this.gitHubApiConfig = gitHubApiConfig;
         this.restTemplate = new RestTemplate();
     }
 
@@ -72,14 +72,8 @@ public class GitHubService {
     }
 
     private String normalizeImagePath(String path) {
-        // ./assets/image.png -> assets/image.png
-        // ../assets/image.png -> assets/image.png
-        // assets/image.png -> assets/image.png
         if (path.startsWith("./")) {
             return path.substring(2);
-        }
-        if (path.startsWith("../")) {
-            return path.substring(3);
         }
         return path;
     }

@@ -12,9 +12,8 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class JsonGenerationService {
-    private final GitHubApiConfig gitHubApiConfig = new GitHubApiConfig();
+    private final GitHubApiConfig gitHubApiConfig;
     private final JsonFileService jsonFileService;
-    private final String BASE_URL = gitHubApiConfig.getImageUrl();
 
     public List<String> generateFiles(List<PostMetadata> blogPosts, List<PostMetadata> psPosts) throws IOException {
         return Stream.of(
@@ -67,12 +66,12 @@ public class JsonGenerationService {
     private String transformMarkdownImagePaths(String content, String category, String slug) {
         return content.replaceAll(
                 "!\\[[^]]*]\\((\\./|\\.\\./)?(assets/[^)]+)\\)",
-                String.format("![](%s/%s/%s/$2)", BASE_URL, category, slug)
+                String.format("![](%s/%s/%s/$2)", gitHubApiConfig.getImageUrl(), category, slug)
         );
     }
 
     private String transformThumbnailPath(String path, String category, String slug) {
         path = path.replaceAll("^\\./|^\\.\\./", "");
-        return String.format("%s/%s/%s/%s", BASE_URL, category, slug, path);
+        return String.format("%s/%s/%s/%s", gitHubApiConfig.getImageUrl(), category, slug, path);
     }
 }
