@@ -18,7 +18,7 @@ public class JsonFileMetadata {
     @Column(name = "file_name", unique = true, nullable = false)
     private String fileName;
 
-    @Column(name = "content", columnDefinition = "json", nullable = false)
+    @Column(name = "content", columnDefinition = "text", nullable = false)
     private String content;
 
     @Column(name = "created_at", nullable = false, updatable = false)
