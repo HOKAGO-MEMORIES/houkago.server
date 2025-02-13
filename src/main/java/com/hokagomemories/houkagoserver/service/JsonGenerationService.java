@@ -1,67 +1,39 @@
 package com.hokagomemories.houkagoserver.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hokagomemories.houkagoserver.config.GitHubApiConfig;
 import com.hokagomemories.houkagoserver.dto.PostMetadata;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class JsonGenerationService {
-    private final ObjectMapper objectMapper;
     private final GitHubApiConfig gitHubApiConfig = new GitHubApiConfig();
-
-    private static final String FILES_DIR = "/app/files";
-    private final String BASE_URL = gitHubApiConfig.getGithubImageUrl();
-
-    public JsonGenerationService() {
-        this.objectMapper = new ObjectMapper();
-    }
+    private final JsonFileService jsonFileService;
+    private final String BASE_URL = gitHubApiConfig.getImageUrl();
 
     public List<String> generateFiles(List<PostMetadata> blogPosts, List<PostMetadata> psPosts) throws IOException {
-        Path filesDir = Paths.get(FILES_DIR);
-        createDirectories(filesDir);
-
         return Stream.of(
-                generateJsonFile("blogPosts.json", transformPosts(blogPosts, "blog")),
-                generateJsonFile("psPosts.json", transformPosts(psPosts, "ps")),
-                generateIndexTs(),
-                generateIndexDts()
+                jsonFileService.saveJsonFile("blogPosts.json", transformPosts(blogPosts, "blog")),
+                jsonFileService.saveJsonFile("psPosts.json", transformPosts(psPosts, "ps")),
+                jsonFileService.saveJsonFile("index.ts", generateIndexTs()),
+                jsonFileService.saveJsonFile("index.d.ts", generateIndexDts())
         ).collect(Collectors.toList());
     }
 
-    private void createDirectories(Path filesDir) throws IOException {
-        if (!Files.exists(filesDir)) {
-            Files.createDirectories(filesDir);
-        }
-    }
-
-    private String generateJsonFile(String fileName, Object content) throws IOException {
-        Path filePath = Paths.get(FILES_DIR, fileName);
-        objectMapper.writeValue(filePath.toFile(), content);
-        return fileName;
-    }
-
     private String generateIndexTs() throws IOException {
-        String fileName = "index.ts";
-        String content = """
+        return """
                 export { default as blogPosts } from './blogPosts.json'
                 export { default as psPosts } from './psPosts.json'
                 """;
-
-        Files.writeString(Path.of(FILES_DIR, fileName), content);
-        return fileName;
     }
 
     private String generateIndexDts() throws IOException {
-        String fileName = "index.d.ts";
-        String content = """
+        return """
                 import type { Post } from '../src/types/post.ts'
                 
                 export type Blog = Post & { body: string }
@@ -70,9 +42,6 @@ public class JsonGenerationService {
                 export type PS = Post & { body: string }
                 export declare const psPosts: PS[]
                 """;
-
-        Files.writeString(Paths.get(FILES_DIR, fileName), content);
-        return fileName;
     }
 
 
