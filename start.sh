@@ -3,7 +3,7 @@
 source /home/ubuntu/app/.env
 
 AWS_REGION="ap-northeast-2"
-ECR_REPO_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/houkago-server"
+ECR_REPO_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/houkago-repo"
 
 aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPO_URL}
 
