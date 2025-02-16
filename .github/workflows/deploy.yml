@@ -29,11 +29,11 @@ jobs:
 
       - name: Tag Docker Image
         run: |
-          docker tag houkago-server:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com/houkago-server:latest
+          docker tag houkago-server:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com/houkago-repo:latest
 
       - name: Push Docker Image to ECR
         run: |
-          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com/houkago-server:latest
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com/houkago-repo:latest
 
   deploy:
     runs-on: ubuntu-latest
