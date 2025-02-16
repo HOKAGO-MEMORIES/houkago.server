@@ -12,7 +12,7 @@ docker rm houkago-server || true
 
 docker pull ${ECR_REPO_URL}:latest
 
-docker run -d -p 80:80 \
+docker run -d -p 8080:8080 \
   -e GITHUB_API_URL=${GITHUB_API_URL} \
   -e GITHUB_IMAGE_URL=${GITHUB_IMAGE_URL} \
   -e GITHUB_TOKEN=${GITHUB_TOKEN} \
