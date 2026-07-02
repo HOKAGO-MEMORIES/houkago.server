@@ -28,8 +28,11 @@ dependencies {
 	runtimeOnly("com.mysql:mysql-connector-j")
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
 	testImplementation("org.springframework.boot:spring-boot-testcontainers")
-	testImplementation("org.testcontainers:junit-jupiter")
-	testImplementation("org.testcontainers:mysql")
+	testImplementation("org.testcontainers:testcontainers:2.0.5")
+	testImplementation("org.testcontainers:testcontainers-junit-jupiter:2.0.5")
+	testImplementation("org.testcontainers:testcontainers-mysql:2.0.5")
+	testImplementation("com.github.docker-java:docker-java-api:3.7.1")
+	testImplementation("com.github.docker-java:docker-java-transport-zerodep:3.7.1")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

@@ -16,6 +16,7 @@ That legacy setup is not the current MVP baseline.
 - The implementation baseline is Spring Boot 3.x, Java 21, Gradle, MySQL, Flyway, and Actuator.
 - Production-like runtime will use Docker Compose, Nginx, the Spring Boot app, and MySQL.
 - Production deployment automation is not decided yet.
+- The current DB schema step defines the post read-model table, JPA entity, and repository only.
 
 ## Local Run
 
@@ -48,14 +49,15 @@ Do not commit real credentials, tokens, server IPs, or production environment va
 ```
 
 The current tests validate the application context and health endpoints. MySQL Testcontainers-based
-schema tests are intentionally deferred until the read-model schema is defined.
+integration tests validate Flyway migration and repository behavior for the post read model.
+
+The repository integration test requires Docker because it starts a MySQL Testcontainer.
 
 ## Not Implemented Yet
 
 - post sync command/service
 - markdown/frontmatter parser
 - post read APIs under `/api/posts`
-- post read-model schema
 - Dockerfile, `docker-compose.yml`, and Nginx config
 - webhook, incremental sync, and frontend revalidation
 
