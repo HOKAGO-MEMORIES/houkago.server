@@ -103,7 +103,6 @@ class PostReadModelRepositoryIntegrationTest {
 		post.setSourceRepository("houkago.posts");
 		post.setSourcePath(category + "/" + slug + "/index.md");
 		post.setSourceUrl(null);
-		post.setSourceHash("source-hash-" + slug);
 		post.setRawBody("## problem notes\n\nraw markdown body");
 		post.setCommitHash("0123456789abcdef0123456789abcdef01234567");
 		post.setChecksum("checksum-" + slug);

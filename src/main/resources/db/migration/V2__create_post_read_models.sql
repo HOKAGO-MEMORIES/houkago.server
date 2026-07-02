@@ -15,7 +15,6 @@ CREATE TABLE post_read_models (
     source_repository VARCHAR(255) NULL,
     source_path VARCHAR(512) NOT NULL,
     source_url VARCHAR(1024) NULL,
-    source_hash VARCHAR(128) NULL,
     raw_body LONGTEXT NOT NULL,
     commit_hash VARCHAR(64) NULL,
     checksum VARCHAR(128) NOT NULL,

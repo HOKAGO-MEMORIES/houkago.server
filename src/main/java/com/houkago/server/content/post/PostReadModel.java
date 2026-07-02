@@ -66,9 +66,6 @@ public class PostReadModel {
 	@Column(name = "source_url", length = 1024)
 	private String sourceUrl;
 
-	@Column(name = "source_hash", length = 128)
-	private String sourceHash;
-
 	@Lob
 	@Column(name = "raw_body", nullable = false, columnDefinition = "longtext")
 	private String rawBody;
@@ -224,14 +221,6 @@ public class PostReadModel {
 
 	public void setSourceUrl(String sourceUrl) {
 		this.sourceUrl = sourceUrl;
-	}
-
-	public String getSourceHash() {
-		return sourceHash;
-	}
-
-	public void setSourceHash(String sourceHash) {
-		this.sourceHash = sourceHash;
 	}
 
 	public String getRawBody() {

@@ -17,6 +17,9 @@ That legacy setup is not the current MVP baseline.
 - Production-like runtime will use Docker Compose, Nginx, the Spring Boot app, and MySQL.
 - Production deployment automation is not decided yet.
 - The current DB schema step defines the post read-model table, JPA entity, and repository only.
+- `commit_hash` stores the `houkago.posts` Git commit used for a sync.
+- `checksum` is reserved for metadata plus `raw_body` change detection during full resync.
+- `source_hash` is not part of the read model.
 
 ## Local Run
 
@@ -57,6 +60,7 @@ The repository integration test requires Docker because it starts a MySQL Testco
 
 - post sync command/service
 - markdown/frontmatter parser
+- commit hash and checksum generation
 - post read APIs under `/api/posts`
 - Dockerfile, `docker-compose.yml`, and Nginx config
 - webhook, incremental sync, and frontend revalidation
