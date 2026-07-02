@@ -1,0 +1,2 @@
+-- Baseline migration for the clean Spring Boot skeleton.
+-- Post read-model tables are intentionally deferred to the next implementation step.

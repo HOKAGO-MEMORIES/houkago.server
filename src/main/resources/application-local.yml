@@ -1,0 +1,9 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: ${HOUKAGO_DB_URL:jdbc:mysql://localhost:3306/houkago_content}
+    username: ${HOUKAGO_DB_USERNAME:}
+    password: ${HOUKAGO_DB_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
