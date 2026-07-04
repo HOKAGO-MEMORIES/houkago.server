@@ -60,6 +60,18 @@ Example with placeholders:
 The runner loads local `houkago.posts` files, validates metadata, and upserts the backend read model.
 It does not expose an HTTP sync endpoint and does not calculate the Git commit hash automatically.
 
+## Public Read API MVP
+
+The current public post read API exposes only rows that are published, active, and public:
+
+```http
+GET /api/posts
+GET /api/posts/{slug}
+```
+
+`GET /api/posts` returns paginated post summaries without `rawBody`. `GET /api/posts/{slug}` returns
+one public post detail with `rawBody`.
+
 ## Local Docker Smoke Test
 
 The local Docker Compose setup is for development smoke tests only. It is not a production
