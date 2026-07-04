@@ -26,3 +26,7 @@ management:
 houkago:
   posts:
     checkout-path: ${HOUKAGO_POSTS_CHECKOUT_PATH:}
+  resync:
+    enabled: ${HOUKAGO_RESYNC_ENABLED:false}
+    posts-root: ${HOUKAGO_RESYNC_POSTS_ROOT:}
+    commit-hash: ${HOUKAGO_RESYNC_COMMIT_HASH:}

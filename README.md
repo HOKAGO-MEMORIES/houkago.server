@@ -39,10 +39,26 @@ HOUKAGO_DB_URL=jdbc:mysql://localhost:3306/houkago_content
 HOUKAGO_DB_USERNAME=
 HOUKAGO_DB_PASSWORD=
 HOUKAGO_POSTS_CHECKOUT_PATH=/path/to/houkago.posts
+HOUKAGO_RESYNC_ENABLED=false
+HOUKAGO_RESYNC_POSTS_ROOT=/path/to/houkago.posts
+HOUKAGO_RESYNC_COMMIT_HASH=example-commit-hash
 SERVER_PORT=8080
 ```
 
 Do not commit real credentials, tokens, server IPs, or production environment values.
+
+## Manual Resync Runner
+
+Manual full resync can be triggered once during application startup. It is disabled by default.
+
+Example with placeholders:
+
+```bash
+./gradlew bootRun --args='--houkago.resync.enabled=true --houkago.resync.posts-root=/path/to/houkago.posts --houkago.resync.commit-hash=example-commit-hash'
+```
+
+The runner loads local `houkago.posts` files, validates metadata, and upserts the backend read model.
+It does not expose an HTTP sync endpoint and does not calculate the Git commit hash automatically.
 
 ## Verification
 
@@ -58,9 +74,8 @@ The repository integration test requires Docker because it starts a MySQL Testco
 
 ## Not Implemented Yet
 
-- post sync command/service
-- markdown/frontmatter parser
-- commit hash and checksum generation
+- deleted or missing source file handling
+- automatic Git commit hash lookup
 - post read APIs under `/api/posts`
 - Dockerfile, `docker-compose.yml`, and Nginx config
 - webhook, incremental sync, and frontend revalidation
