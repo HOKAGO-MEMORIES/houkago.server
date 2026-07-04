@@ -10,6 +10,8 @@ public interface PostReadModelRepository extends JpaRepository<PostReadModel, Lo
 
 	Optional<PostReadModel> findBySlug(String slug);
 
+	Optional<PostReadModel> findBySourcePath(String sourcePath);
+
 	Page<PostReadModel> findBySourceStatusAndSyncStatusAndVisibilityOrderByPostDateDescSlugAsc(
 			PostSourceStatus sourceStatus,
 			PostSyncStatus syncStatus,

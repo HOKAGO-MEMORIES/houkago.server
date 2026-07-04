@@ -7,6 +7,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
+import org.springframework.stereotype.Component;
+
+@Component
 public class PostMetadataMapper {
 
 	private static final Set<String> ALLOWED_CATEGORIES = Set.of("algorithm", "project", "cs", "blog");

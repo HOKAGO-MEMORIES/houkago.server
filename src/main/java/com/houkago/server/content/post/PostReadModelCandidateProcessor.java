@@ -3,6 +3,9 @@ package com.houkago.server.content.post;
 import java.time.Instant;
 import java.util.Objects;
 
+import org.springframework.stereotype.Component;
+
+@Component
 public class PostReadModelCandidateProcessor {
 
 	private final PostMetadataMapper metadataMapper;

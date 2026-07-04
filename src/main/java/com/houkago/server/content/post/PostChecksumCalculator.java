@@ -7,6 +7,9 @@ import java.time.LocalDate;
 import java.util.HexFormat;
 import java.util.List;
 
+import org.springframework.stereotype.Component;
+
+@Component
 public class PostChecksumCalculator {
 
 	public String calculate(PostChecksumInput input) {

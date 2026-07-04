@@ -4,6 +4,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
+import org.springframework.stereotype.Component;
+
+@Component
 public class PostReadModelAssembler {
 
 	public PostReadModel create(
