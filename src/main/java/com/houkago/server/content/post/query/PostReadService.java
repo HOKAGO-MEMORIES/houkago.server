@@ -14,13 +14,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import com.houkago.server.content.post.api.PostDetailResponse;
-import com.houkago.server.content.post.api.PostListItemResponse;
 import com.houkago.server.content.post.policy.PostSourceStatus;
 import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
 import com.houkago.server.content.post.readmodel.PostReadModel;
 import com.houkago.server.content.post.readmodel.PostReadModelRepository;
+import com.houkago.server.content.post.readmodel.PostReadSummaryProjection;
 
 @Service
 @Profile("!test")
@@ -41,18 +40,18 @@ public class PostReadService {
 	}
 
 	@Transactional(readOnly = true)
-	public Page<PostListItemResponse> findPublicPosts(Integer page, Integer size) {
+	public Page<PostReadListItem> findPublicPosts(Integer page, Integer size) {
 		Pageable pageable = PageRequest.of(normalizePage(page), normalizeSize(size));
 		return repository.findPublicPostSummaries(
 				PostSourceStatus.PUBLISHED,
 				PostSyncStatus.ACTIVE,
 				PostVisibility.PUBLIC,
 				pageable)
-				.map(this::toListItemResponse);
+				.map(this::toListItem);
 	}
 
 	@Transactional(readOnly = true)
-	public Optional<PostDetailResponse> findPublicPostBySlug(String slug) {
+	public Optional<PostReadDetail> findPublicPostBySlug(String slug) {
 		if (slug == null || slug.isBlank()) {
 			return Optional.empty();
 		}
@@ -61,11 +60,11 @@ public class PostReadService {
 				PostSourceStatus.PUBLISHED,
 				PostSyncStatus.ACTIVE,
 				PostVisibility.PUBLIC)
-				.map(this::toDetailResponse);
+				.map(this::toDetail);
 	}
 
-	private PostListItemResponse toListItemResponse(PostReadSummaryProjection projection) {
-		return new PostListItemResponse(
+	private PostReadListItem toListItem(PostReadSummaryProjection projection) {
+		return new PostReadListItem(
 				projection.slug(),
 				projection.title(),
 				projection.description(),
@@ -78,8 +77,8 @@ public class PostReadService {
 				projection.featured());
 	}
 
-	private PostDetailResponse toDetailResponse(PostReadModel post) {
-		return new PostDetailResponse(
+	private PostReadDetail toDetail(PostReadModel post) {
+		return new PostReadDetail(
 				post.getSlug(),
 				post.getTitle(),
 				post.getDescription(),

@@ -10,7 +10,6 @@ import org.springframework.data.jpa.repository.Query;
 import com.houkago.server.content.post.policy.PostSourceStatus;
 import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
-import com.houkago.server.content.post.query.PostReadSummaryProjection;
 
 public interface PostReadModelRepository extends JpaRepository<PostReadModel, Long> {
 
@@ -33,7 +32,7 @@ public interface PostReadModelRepository extends JpaRepository<PostReadModel, Lo
 
 	@Query(
 			value = """
-					select new com.houkago.server.content.post.query.PostReadSummaryProjection(
+					select new com.houkago.server.content.post.readmodel.PostReadSummaryProjection(
 						p.slug,
 						p.title,
 						p.description,
