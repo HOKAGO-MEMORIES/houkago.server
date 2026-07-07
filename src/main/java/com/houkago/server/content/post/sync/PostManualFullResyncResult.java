@@ -9,6 +9,7 @@ public record PostManualFullResyncResult(
 		int updatedCount,
 		int touchedCount,
 		int totalUpsertedCount,
+		int deletedCount,
 		String commitHash,
 		Instant syncedAt) {
 
@@ -27,6 +28,9 @@ public record PostManualFullResyncResult(
 		}
 		if (totalUpsertedCount < 0) {
 			throw new IllegalArgumentException("totalUpsertedCount must not be negative");
+		}
+		if (deletedCount < 0) {
+			throw new IllegalArgumentException("deletedCount must not be negative");
 		}
 		if (commitHash == null || commitHash.isBlank()) {
 			throw new IllegalArgumentException("commitHash is required");

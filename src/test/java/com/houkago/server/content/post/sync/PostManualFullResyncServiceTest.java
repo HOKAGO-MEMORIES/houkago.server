@@ -14,12 +14,14 @@ import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.houkago.server.content.post.readmodel.PostReadModel;
+import com.houkago.server.content.post.readmodel.PostReadModelRetirementService;
 import com.houkago.server.content.post.readmodel.PostReadModelUpsertConflictException;
 import com.houkago.server.content.post.readmodel.PostReadModelUpsertResult;
 import com.houkago.server.content.post.readmodel.PostReadModelUpsertService;
@@ -37,7 +39,11 @@ class PostManualFullResyncServiceTest {
 
 	private final PostSourceCandidateLoader candidateLoader = mock(PostSourceCandidateLoader.class);
 	private final PostReadModelUpsertService upsertService = mock(PostReadModelUpsertService.class);
-	private final PostManualFullResyncService service = new PostManualFullResyncService(candidateLoader, upsertService);
+	private final PostReadModelRetirementService retirementService = mock(PostReadModelRetirementService.class);
+	private final PostManualFullResyncService service = new PostManualFullResyncService(
+			candidateLoader,
+			upsertService,
+			retirementService);
 
 	@Test
 	void upsertsCandidatesSequentially() {
@@ -46,12 +52,16 @@ class PostManualFullResyncServiceTest {
 		when(candidateLoader.load(POSTS_ROOT)).thenReturn(List.of(first, second));
 		when(upsertService.upsert(first, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.CREATED));
 		when(upsertService.upsert(second, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.UPDATED));
+		when(retirementService.retireMissingSources(Set.of(first.sourcePath(), second.sourcePath()), COMMIT_HASH,
+				SYNCED_AT)).thenReturn(0);
 
 		service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT);
 
-		InOrder order = inOrder(upsertService);
+		InOrder order = inOrder(upsertService, retirementService);
 		order.verify(upsertService).upsert(first, COMMIT_HASH, SYNCED_AT);
 		order.verify(upsertService).upsert(second, COMMIT_HASH, SYNCED_AT);
+		order.verify(retirementService).retireMissingSources(Set.of(first.sourcePath(), second.sourcePath()),
+				COMMIT_HASH, SYNCED_AT);
 		order.verifyNoMoreInteractions();
 	}
 
@@ -66,6 +76,10 @@ class PostManualFullResyncServiceTest {
 		when(upsertService.upsert(second, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.UPDATED));
 		when(upsertService.upsert(third, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.TOUCHED));
 		when(upsertService.upsert(fourth, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.CREATED));
+		when(retirementService.retireMissingSources(
+				Set.of(first.sourcePath(), second.sourcePath(), third.sourcePath(), fourth.sourcePath()),
+				COMMIT_HASH,
+				SYNCED_AT)).thenReturn(2);
 
 		PostManualFullResyncResult result = service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT);
 
@@ -76,6 +90,7 @@ class PostManualFullResyncServiceTest {
 		assertThat(result.totalUpsertedCount()).isEqualTo(4);
 		assertThat(result.totalUpsertedCount())
 				.isEqualTo(result.createdCount() + result.updatedCount() + result.touchedCount());
+		assertThat(result.deletedCount()).isEqualTo(2);
 		assertThat(result.commitHash()).isEqualTo(COMMIT_HASH);
 		assertThat(result.syncedAt()).isEqualTo(SYNCED_AT);
 	}
@@ -91,8 +106,10 @@ class PostManualFullResyncServiceTest {
 		assertThat(result.updatedCount()).isZero();
 		assertThat(result.touchedCount()).isZero();
 		assertThat(result.totalUpsertedCount()).isZero();
+		assertThat(result.deletedCount()).isZero();
 		assertThat(result.commitHash()).isEqualTo(COMMIT_HASH);
 		assertThat(result.syncedAt()).isEqualTo(SYNCED_AT);
+		verify(retirementService, never()).retireMissingSources(any(), any(), any());
 	}
 
 	@Test
@@ -102,6 +119,7 @@ class PostManualFullResyncServiceTest {
 		ParsedPostCandidate third = candidate("c-post", "blog/c-post/index.md");
 		when(candidateLoader.load(POSTS_ROOT)).thenReturn(List.of(first, second, third));
 		when(upsertService.upsert(any(), any(), any())).thenReturn(result(PostReadModelUpsertStatus.UPDATED));
+		when(retirementService.retireMissingSources(any(), any(), any())).thenReturn(0);
 
 		service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT);
 
@@ -118,6 +136,7 @@ class PostManualFullResyncServiceTest {
 
 		assertThatThrownBy(() -> service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT))
 				.isSameAs(exception);
+		verify(retirementService, never()).retireMissingSources(any(), any(), any());
 	}
 
 	@Test
@@ -133,6 +152,7 @@ class PostManualFullResyncServiceTest {
 		assertThatThrownBy(() -> service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT))
 				.isSameAs(exception);
 		verify(upsertService, never()).upsert(third, COMMIT_HASH, SYNCED_AT);
+		verify(retirementService, never()).retireMissingSources(any(), any(), any());
 	}
 
 	@Test

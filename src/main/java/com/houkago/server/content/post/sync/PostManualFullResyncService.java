@@ -4,7 +4,9 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
+import com.houkago.server.content.post.readmodel.PostReadModelRetirementService;
 import com.houkago.server.content.post.readmodel.PostReadModelUpsertResult;
 import com.houkago.server.content.post.readmodel.PostReadModelUpsertService;
 import com.houkago.server.content.post.readmodel.PostReadModelUpsertStatus;
@@ -15,12 +17,15 @@ public class PostManualFullResyncService {
 
 	private final PostSourceCandidateLoader candidateLoader;
 	private final PostReadModelUpsertService upsertService;
+	private final PostReadModelRetirementService retirementService;
 
 	public PostManualFullResyncService(
 			PostSourceCandidateLoader candidateLoader,
-			PostReadModelUpsertService upsertService) {
+			PostReadModelUpsertService upsertService,
+			PostReadModelRetirementService retirementService) {
 		this.candidateLoader = Objects.requireNonNull(candidateLoader, "candidateLoader is required");
 		this.upsertService = Objects.requireNonNull(upsertService, "upsertService is required");
+		this.retirementService = Objects.requireNonNull(retirementService, "retirementService is required");
 	}
 
 	public PostManualFullResyncResult resync(Path postsRoot, String commitHash, Instant syncedAt) {
@@ -44,6 +49,12 @@ public class PostManualFullResyncService {
 			}
 		}
 
+		Set<String> currentSourcePaths = candidates.stream()
+				.map(ParsedPostCandidate::sourcePath)
+				.collect(java.util.stream.Collectors.toUnmodifiableSet());
+		int deletedCount = currentSourcePaths.isEmpty()
+				? 0
+				: retirementService.retireMissingSources(currentSourcePaths, requiredCommitHash, syncedAt);
 		int totalUpsertedCount = createdCount + updatedCount + touchedCount;
 		return new PostManualFullResyncResult(
 				candidates.size(),
@@ -51,6 +62,7 @@ public class PostManualFullResyncService {
 				updatedCount,
 				touchedCount,
 				totalUpsertedCount,
+				deletedCount,
 				requiredCommitHash,
 				syncedAt);
 	}

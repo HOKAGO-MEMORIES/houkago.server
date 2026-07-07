@@ -7,6 +7,8 @@ import java.util.Objects;
 import org.springframework.stereotype.Component;
 
 import com.houkago.server.content.post.metadata.PostMetadataMapping;
+import com.houkago.server.content.post.policy.PostSyncStatus;
+import com.houkago.server.content.post.policy.PostVisibility;
 
 @Component
 public class PostReadModelAssembler {
@@ -93,6 +95,17 @@ public class PostReadModelAssembler {
 		Objects.requireNonNull(post, "post read model is required");
 		Objects.requireNonNull(syncedAt, "syncedAt is required");
 
+		post.setCommitHash(requireText("commitHash", commitHash));
+		post.setSyncedAt(syncedAt);
+		return post;
+	}
+
+	public PostReadModel markDeleted(PostReadModel post, String commitHash, Instant syncedAt) {
+		Objects.requireNonNull(post, "post read model is required");
+		Objects.requireNonNull(syncedAt, "syncedAt is required");
+
+		post.setSyncStatus(PostSyncStatus.DELETED);
+		post.setVisibility(PostVisibility.PRIVATE);
 		post.setCommitHash(requireText("commitHash", commitHash));
 		post.setSyncedAt(syncedAt);
 		return post;

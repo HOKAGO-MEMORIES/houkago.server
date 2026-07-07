@@ -14,4 +14,11 @@ public class PostReadModelUpsertConfiguration {
 			PostReadModelCandidateProcessor processor) {
 		return new PostReadModelUpsertService(repository, processor);
 	}
+
+	@Bean
+	PostReadModelRetirementService postReadModelRetirementService(
+			PostReadModelRepository repository,
+			PostReadModelAssembler assembler) {
+		return new PostReadModelRetirementService(repository, assembler);
+	}
 }

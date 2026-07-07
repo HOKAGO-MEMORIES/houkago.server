@@ -69,7 +69,7 @@ class PostReadApiIntegrationTest {
 		repository.save(post("private-post", LocalDate.of(2026, 7, 5), PostSourceStatus.PUBLISHED,
 				PostSyncStatus.ACTIVE, PostVisibility.PRIVATE));
 		repository.save(post("deleted-post", LocalDate.of(2026, 7, 5), PostSourceStatus.PUBLISHED,
-				PostSyncStatus.DELETED, PostVisibility.PUBLIC));
+				PostSyncStatus.DELETED, PostVisibility.PRIVATE));
 
 		ResponseEntity<String> response = restTemplate.getForEntity("/api/posts", String.class);
 
@@ -174,7 +174,7 @@ class PostReadApiIntegrationTest {
 		repository.save(post("private-post", LocalDate.of(2026, 7, 4), PostSourceStatus.PUBLISHED,
 				PostSyncStatus.ACTIVE, PostVisibility.PRIVATE));
 		repository.save(post("deleted-post", LocalDate.of(2026, 7, 4), PostSourceStatus.PUBLISHED,
-				PostSyncStatus.DELETED, PostVisibility.PUBLIC));
+				PostSyncStatus.DELETED, PostVisibility.PRIVATE));
 
 		assertThat(restTemplate.getForEntity("/api/posts/draft-post", String.class).getStatusCode())
 				.isEqualTo(HttpStatus.NOT_FOUND);

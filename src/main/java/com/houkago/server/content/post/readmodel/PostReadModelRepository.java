@@ -1,5 +1,7 @@
 package com.houkago.server.content.post.readmodel;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.domain.Page;
@@ -16,6 +18,10 @@ public interface PostReadModelRepository extends JpaRepository<PostReadModel, Lo
 	Optional<PostReadModel> findBySlug(String slug);
 
 	Optional<PostReadModel> findBySourcePath(String sourcePath);
+
+	List<PostReadModel> findBySyncStatusAndSourcePathNotIn(
+			PostSyncStatus syncStatus,
+			Collection<String> sourcePaths);
 
 	Page<PostReadModel> findBySourceStatusAndSyncStatusAndVisibilityOrderByPostDateDescSlugAsc(
 			PostSourceStatus sourceStatus,
