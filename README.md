@@ -12,13 +12,12 @@ That legacy setup is not the current MVP baseline.
 - `houkago.posts` remains the content source of truth.
 - The database is not a canonical content store.
 - The database will be used as an index/cache/read model for serving post data.
-- The MVP will start with manual full resync from a local `houkago.posts` checkout.
+- The MVP supports manual full resync from a local `houkago.posts` checkout.
 - The implementation baseline is Spring Boot 3.x, Java 21, Gradle, MySQL, Flyway, and Actuator.
 - Production-like runtime will use Docker Compose, Nginx, the Spring Boot app, and MySQL.
 - Production deployment automation is not decided yet.
-- The current DB schema step defines the post read-model table, JPA entity, and repository only.
 - `commit_hash` stores the `houkago.posts` Git commit used for a sync.
-- `checksum` is reserved for metadata plus `raw_body` change detection during full resync.
+- `checksum` tracks metadata plus `raw_body` changes during full resync.
 - `source_hash` is not part of the read model.
 
 ## Local Run
@@ -58,7 +57,12 @@ Example with placeholders:
 ```
 
 The runner loads local `houkago.posts` files, validates metadata, and upserts the backend read model.
-It does not expose an HTTP sync endpoint and does not calculate the Git commit hash automatically.
+Manual full resync also retires rows for source files missing from the current scan. Deleted rows are
+soft-deleted with `syncStatus = DELETED` and `visibility = PRIVATE`; the database stores those
+values as `sync_status = 'deleted'` and `visibility = 'private'`.
+
+The runner does not expose an HTTP sync endpoint and does not calculate the Git commit hash
+automatically.
 
 ## Public Read API MVP
 
@@ -72,10 +76,12 @@ GET /api/posts/{slug}
 `GET /api/posts` returns paginated post summaries without `rawBody`. `GET /api/posts/{slug}` returns
 one public post detail with `rawBody`.
 
+Deleted rows are excluded from public list/detail APIs.
+
 ## Local Docker Smoke Test
 
 The local Docker Compose setup is for development smoke tests only. It is not a production
-deployment setup and does not include Nginx, HTTPS, scheduler, or public post APIs.
+deployment setup and does not include Nginx, HTTPS, scheduler, or production deployment automation.
 
 Prepare a local `.env` file:
 
@@ -108,7 +114,9 @@ docker compose --env-file .env -f compose.dev.yml exec mysql sh -lc 'mysql -u"$M
 ```
 
 The app logs should show Flyway migration activity and, when `HOUKAGO_RESYNC_ENABLED=true`, the
-manual resync summary. `MYSQL_HOST_PORT` exposes MySQL to the host for local debugging only.
+manual resync summary. A deleted-handling smoke should show `deletedCount` when a previously synced
+source file is missing from the mounted posts root. `MYSQL_HOST_PORT` exposes MySQL to the host for
+local debugging only.
 
 Stop the smoke test stack:
 
@@ -130,9 +138,7 @@ The repository integration test requires Docker because it starts a MySQL Testco
 
 ## Not Implemented Yet
 
-- deleted or missing source file handling
 - automatic Git commit hash lookup
-- post read APIs under `/api/posts`
 - production Docker Compose, Nginx config, and deployment automation
 - webhook, incremental sync, and frontend revalidation
 
