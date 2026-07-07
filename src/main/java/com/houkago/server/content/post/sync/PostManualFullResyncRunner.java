@@ -34,10 +34,11 @@ public class PostManualFullResyncRunner implements ApplicationRunner {
 		PostManualFullResyncResult result = resyncService.resync(postsRoot, commitHash, Instant.now());
 
 		log.info("Manual post full resync completed: candidateCount={}, createdCount={}, updatedCount={}, "
-						+ "totalUpsertedCount={}, commitHash={}",
+						+ "touchedCount={}, totalUpsertedCount={}, commitHash={}",
 				result.candidateCount(),
 				result.createdCount(),
 				result.updatedCount(),
+				result.touchedCount(),
 				result.totalUpsertedCount(),
 				result.commitHash());
 	}

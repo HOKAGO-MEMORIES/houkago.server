@@ -115,6 +115,40 @@ class PostReadModelUpsertServiceIntegrationTest {
 	}
 
 	@Test
+	void touchesWhenExistingChecksumMatchesCandidateChecksum() {
+		ParsedPostCandidate candidate = candidate("touched-post", "blog/touched-post/index.md", "fresh body");
+		String checksum = expectedChecksum(candidate);
+		PostReadModel existing = samplePost("touched-post", "blog/touched-post/index.md");
+		existing.setTitle("Existing title should remain");
+		existing.setDescription("Existing description should remain.");
+		existing.setCategory("blog");
+		existing.setTagsJson("[\"old-tag\"]");
+		existing.setRawBody("old body should remain");
+		existing.setChecksum(checksum);
+		existing.setCommitHash("old-commit");
+		existing.setSyncedAt(Instant.parse("2026-07-01T00:00:00Z"));
+		repository.save(existing);
+		Instant nextSyncedAt = Instant.parse("2026-07-04T02:00:00Z");
+
+		PostReadModelUpsertResult result = upsertService.upsert(candidate, "commit-touch", nextSyncedAt);
+
+		assertThat(result.status()).isEqualTo(PostReadModelUpsertStatus.TOUCHED);
+		assertThat(repository.findBySlug("touched-post")).hasValueSatisfying(post -> {
+			assertThat(post.getCommitHash()).isEqualTo("commit-touch");
+			assertThat(post.getSyncedAt()).isEqualTo(nextSyncedAt);
+			assertThat(post.getTitle()).isEqualTo("Existing title should remain");
+			assertThat(post.getDescription()).isEqualTo("Existing description should remain.");
+			assertThat(post.getTagsJson()).isEqualTo("[\"old-tag\"]");
+			assertThat(post.getRawBody()).isEqualTo("old body should remain");
+			assertThat(post.getChecksum()).isEqualTo(checksum);
+			assertThat(post.getSourcePath()).isEqualTo("blog/touched-post/index.md");
+			assertThat(post.getSourceStatus()).isEqualTo(PostSourceStatus.PUBLISHED);
+			assertThat(post.getSyncStatus()).isEqualTo(PostSyncStatus.ACTIVE);
+			assertThat(post.getVisibility()).isEqualTo(PostVisibility.PUBLIC);
+		});
+	}
+
+	@Test
 	void conflictWhenSourcePathAndSlugPointToDifferentRows() {
 		PostReadModel sourcePathRow = repository.save(samplePost("source-path-row", "blog/conflict-source/index.md"));
 		PostReadModel slugRow = repository.save(samplePost("conflict-slug", "blog/conflict-slug/index.md"));
@@ -200,6 +234,15 @@ class PostReadModelUpsertServiceIntegrationTest {
 						null,
 						null),
 				rawBody);
+	}
+
+	private static String expectedChecksum(ParsedPostCandidate candidate) {
+		PostMetadataMapper metadataMapper = new PostMetadataMapper();
+		PostChecksumCalculator checksumCalculator = new PostChecksumCalculator();
+		return checksumCalculator.calculate(
+				com.houkago.server.content.post.checksum.PostChecksumInput.from(
+						metadataMapper.map(candidate.metadataInput()),
+						candidate.rawBody()));
 	}
 
 	private static PostReadModel samplePost(String slug, String sourcePath) {

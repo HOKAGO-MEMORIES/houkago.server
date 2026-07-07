@@ -33,16 +33,16 @@ public class PostReadModelUpsertService {
 		Optional<PostReadModel> rowBySourcePath = repository.findBySourcePath(candidate.sourcePath());
 		Optional<PostReadModel> rowBySlug = findBySlug(candidate);
 		Optional<PostReadModel> existing = selectExistingRow(candidate, rowBySourcePath, rowBySlug);
+		PostReadModelPreparedCandidate preparedCandidate = processor.prepare(candidate);
 
-		PostReadModel post = existing
-				.map(row -> processor.update(row, candidate, requiredCommitHash, syncedAt))
-				.orElseGet(() -> processor.create(candidate, requiredCommitHash, syncedAt));
-		PostReadModel saved = repository.save(post);
+		PostReadModelUpsertStatus status = determineStatus(existing, preparedCandidate);
+		PostReadModel post = switch (status) {
+			case CREATED -> processor.create(preparedCandidate, requiredCommitHash, syncedAt);
+			case UPDATED -> processor.update(existing.orElseThrow(), preparedCandidate, requiredCommitHash, syncedAt);
+			case TOUCHED -> processor.touch(existing.orElseThrow(), requiredCommitHash, syncedAt);
+		};
 
-		PostReadModelUpsertStatus status = existing.isPresent()
-				? PostReadModelUpsertStatus.UPDATED
-				: PostReadModelUpsertStatus.CREATED;
-		return new PostReadModelUpsertResult(saved, status);
+		return new PostReadModelUpsertResult(repository.save(post), status);
 	}
 
 	private Optional<PostReadModel> findBySlug(ParsedPostCandidate candidate) {
@@ -74,6 +74,18 @@ public class PostReadModelUpsertService {
 		}
 
 		return rowBySourcePath.or(() -> rowBySlug);
+	}
+
+	private static PostReadModelUpsertStatus determineStatus(
+			Optional<PostReadModel> existing,
+			PostReadModelPreparedCandidate candidate) {
+		if (existing.isEmpty()) {
+			return PostReadModelUpsertStatus.CREATED;
+		}
+		if (Objects.equals(existing.get().getChecksum(), candidate.checksum())) {
+			return PostReadModelUpsertStatus.TOUCHED;
+		}
+		return PostReadModelUpsertStatus.UPDATED;
 	}
 
 	private static String requireText(String field, String value) {

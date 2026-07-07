@@ -56,22 +56,26 @@ class PostManualFullResyncServiceTest {
 	}
 
 	@Test
-	void aggregatesCreatedAndUpdatedCounts() {
+	void aggregatesCreatedUpdatedAndTouchedCounts() {
 		ParsedPostCandidate first = candidate("created-post", "blog/created-post/index.md");
 		ParsedPostCandidate second = candidate("updated-post", "blog/updated-post/index.md");
-		ParsedPostCandidate third = candidate("another-created-post", "blog/another-created-post/index.md");
-		when(candidateLoader.load(POSTS_ROOT)).thenReturn(List.of(first, second, third));
+		ParsedPostCandidate third = candidate("touched-post", "blog/touched-post/index.md");
+		ParsedPostCandidate fourth = candidate("another-created-post", "blog/another-created-post/index.md");
+		when(candidateLoader.load(POSTS_ROOT)).thenReturn(List.of(first, second, third, fourth));
 		when(upsertService.upsert(first, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.CREATED));
 		when(upsertService.upsert(second, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.UPDATED));
-		when(upsertService.upsert(third, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.CREATED));
+		when(upsertService.upsert(third, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.TOUCHED));
+		when(upsertService.upsert(fourth, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.CREATED));
 
 		PostManualFullResyncResult result = service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT);
 
-		assertThat(result.candidateCount()).isEqualTo(3);
+		assertThat(result.candidateCount()).isEqualTo(4);
 		assertThat(result.createdCount()).isEqualTo(2);
 		assertThat(result.updatedCount()).isEqualTo(1);
-		assertThat(result.totalUpsertedCount()).isEqualTo(3);
-		assertThat(result.totalUpsertedCount()).isEqualTo(result.createdCount() + result.updatedCount());
+		assertThat(result.touchedCount()).isEqualTo(1);
+		assertThat(result.totalUpsertedCount()).isEqualTo(4);
+		assertThat(result.totalUpsertedCount())
+				.isEqualTo(result.createdCount() + result.updatedCount() + result.touchedCount());
 		assertThat(result.commitHash()).isEqualTo(COMMIT_HASH);
 		assertThat(result.syncedAt()).isEqualTo(SYNCED_AT);
 	}
@@ -85,6 +89,7 @@ class PostManualFullResyncServiceTest {
 		assertThat(result.candidateCount()).isZero();
 		assertThat(result.createdCount()).isZero();
 		assertThat(result.updatedCount()).isZero();
+		assertThat(result.touchedCount()).isZero();
 		assertThat(result.totalUpsertedCount()).isZero();
 		assertThat(result.commitHash()).isEqualTo(COMMIT_HASH);
 		assertThat(result.syncedAt()).isEqualTo(SYNCED_AT);

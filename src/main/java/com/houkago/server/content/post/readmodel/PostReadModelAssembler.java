@@ -23,6 +23,20 @@ public class PostReadModelAssembler {
 		return post;
 	}
 
+	public PostReadModel create(
+			PostReadModelPreparedCandidate candidate,
+			String commitHash,
+			Instant syncedAt) {
+		Objects.requireNonNull(candidate, "prepared candidate is required");
+		return create(
+				candidate.metadata(),
+				candidate.rawBody(),
+				candidate.sourcePath(),
+				commitHash,
+				candidate.checksum(),
+				syncedAt);
+	}
+
 	public PostReadModel update(
 			PostReadModel post,
 			PostMetadataMapping metadata,
@@ -55,6 +69,31 @@ public class PostReadModelAssembler {
 		post.setSourceStatus(metadata.sourceStatus());
 		post.setSyncStatus(metadata.syncStatus());
 		post.setVisibility(metadata.visibility());
+		post.setSyncedAt(syncedAt);
+		return post;
+	}
+
+	public PostReadModel update(
+			PostReadModel post,
+			PostReadModelPreparedCandidate candidate,
+			String commitHash,
+			Instant syncedAt) {
+		Objects.requireNonNull(candidate, "prepared candidate is required");
+		return update(
+				post,
+				candidate.metadata(),
+				candidate.rawBody(),
+				candidate.sourcePath(),
+				commitHash,
+				candidate.checksum(),
+				syncedAt);
+	}
+
+	public PostReadModel touch(PostReadModel post, String commitHash, Instant syncedAt) {
+		Objects.requireNonNull(post, "post read model is required");
+		Objects.requireNonNull(syncedAt, "syncedAt is required");
+
+		post.setCommitHash(requireText("commitHash", commitHash));
 		post.setSyncedAt(syncedAt);
 		return post;
 	}

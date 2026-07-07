@@ -31,6 +31,7 @@ public class PostManualFullResyncService {
 		List<ParsedPostCandidate> candidates = candidateLoader.load(postsRoot);
 		int createdCount = 0;
 		int updatedCount = 0;
+		int touchedCount = 0;
 
 		for (ParsedPostCandidate candidate : candidates) {
 			PostReadModelUpsertResult result = upsertService.upsert(candidate, requiredCommitHash, syncedAt);
@@ -38,14 +39,17 @@ public class PostManualFullResyncService {
 				createdCount++;
 			} else if (result.status() == PostReadModelUpsertStatus.UPDATED) {
 				updatedCount++;
+			} else if (result.status() == PostReadModelUpsertStatus.TOUCHED) {
+				touchedCount++;
 			}
 		}
 
-		int totalUpsertedCount = createdCount + updatedCount;
+		int totalUpsertedCount = createdCount + updatedCount + touchedCount;
 		return new PostManualFullResyncResult(
 				candidates.size(),
 				createdCount,
 				updatedCount,
+				touchedCount,
 				totalUpsertedCount,
 				requiredCommitHash,
 				syncedAt);

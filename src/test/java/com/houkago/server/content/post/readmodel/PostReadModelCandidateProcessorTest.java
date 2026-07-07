@@ -119,7 +119,7 @@ class PostReadModelCandidateProcessorTest {
 
 	@Test
 	void nullCandidateRejected() {
-		assertThatThrownBy(() -> processor.create(null, "commit-a", SYNCED_AT))
+		assertThatThrownBy(() -> processor.create((ParsedPostCandidate) null, "commit-a", SYNCED_AT))
 				.isInstanceOf(NullPointerException.class)
 				.hasMessageContaining("candidate is required");
 	}

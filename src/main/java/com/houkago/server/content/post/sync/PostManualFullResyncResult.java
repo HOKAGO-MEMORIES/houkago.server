@@ -7,6 +7,7 @@ public record PostManualFullResyncResult(
 		int candidateCount,
 		int createdCount,
 		int updatedCount,
+		int touchedCount,
 		int totalUpsertedCount,
 		String commitHash,
 		Instant syncedAt) {
@@ -20,6 +21,9 @@ public record PostManualFullResyncResult(
 		}
 		if (updatedCount < 0) {
 			throw new IllegalArgumentException("updatedCount must not be negative");
+		}
+		if (touchedCount < 0) {
+			throw new IllegalArgumentException("touchedCount must not be negative");
 		}
 		if (totalUpsertedCount < 0) {
 			throw new IllegalArgumentException("totalUpsertedCount must not be negative");

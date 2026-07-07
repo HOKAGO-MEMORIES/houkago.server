@@ -27,20 +27,27 @@ public class PostReadModelCandidateProcessor {
 		this.assembler = Objects.requireNonNull(assembler, "assembler is required");
 	}
 
-	public PostReadModel create(ParsedPostCandidate candidate, String commitHash, Instant syncedAt) {
+	public PostReadModelPreparedCandidate prepare(ParsedPostCandidate candidate) {
 		Objects.requireNonNull(candidate, "candidate is required");
-		String requiredCommitHash = requireText("commitHash", commitHash);
-		Objects.requireNonNull(syncedAt, "syncedAt is required");
 
 		PostMetadataMapping metadata = metadataMapper.map(candidate.metadataInput());
 		String checksum = checksumCalculator.calculate(PostChecksumInput.from(metadata, candidate.rawBody()));
-		return assembler.create(
+		return new PostReadModelPreparedCandidate(
 				metadata,
 				candidate.rawBody(),
 				candidate.sourcePath(),
-				requiredCommitHash,
-				checksum,
-				syncedAt);
+				checksum);
+	}
+
+	public PostReadModel create(ParsedPostCandidate candidate, String commitHash, Instant syncedAt) {
+		return create(prepare(candidate), commitHash, syncedAt);
+	}
+
+	public PostReadModel create(PostReadModelPreparedCandidate candidate, String commitHash, Instant syncedAt) {
+		String requiredCommitHash = requireText("commitHash", commitHash);
+		Objects.requireNonNull(syncedAt, "syncedAt is required");
+
+		return assembler.create(candidate, requiredCommitHash, syncedAt);
 	}
 
 	public PostReadModel update(
@@ -48,21 +55,26 @@ public class PostReadModelCandidateProcessor {
 			ParsedPostCandidate candidate,
 			String commitHash,
 			Instant syncedAt) {
+		return update(existing, prepare(candidate), commitHash, syncedAt);
+	}
+
+	public PostReadModel update(
+			PostReadModel existing,
+			PostReadModelPreparedCandidate candidate,
+			String commitHash,
+			Instant syncedAt) {
 		Objects.requireNonNull(existing, "existing post read model is required");
-		Objects.requireNonNull(candidate, "candidate is required");
 		String requiredCommitHash = requireText("commitHash", commitHash);
 		Objects.requireNonNull(syncedAt, "syncedAt is required");
 
-		PostMetadataMapping metadata = metadataMapper.map(candidate.metadataInput());
-		String checksum = checksumCalculator.calculate(PostChecksumInput.from(metadata, candidate.rawBody()));
-		return assembler.update(
-				existing,
-				metadata,
-				candidate.rawBody(),
-				candidate.sourcePath(),
-				requiredCommitHash,
-				checksum,
-				syncedAt);
+		return assembler.update(existing, candidate, requiredCommitHash, syncedAt);
+	}
+
+	public PostReadModel touch(PostReadModel existing, String commitHash, Instant syncedAt) {
+		String requiredCommitHash = requireText("commitHash", commitHash);
+		Objects.requireNonNull(syncedAt, "syncedAt is required");
+
+		return assembler.touch(existing, requiredCommitHash, syncedAt);
 	}
 
 	private static String requireText(String field, String value) {

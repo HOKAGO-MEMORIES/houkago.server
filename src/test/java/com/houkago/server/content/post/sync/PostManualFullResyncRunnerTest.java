@@ -121,6 +121,7 @@ class PostManualFullResyncRunnerTest {
 				2,
 				1,
 				1,
+				0,
 				2,
 				COMMIT_HASH,
 				Instant.parse("2026-07-04T00:00:00Z"));
