@@ -1,0 +1,60 @@
+services:
+  mysql:
+    image: mysql:8.4
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+09:00
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?Set MYSQL_DATABASE in server.env}
+      MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER in server.env}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in server.env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in server.env}
+      TZ: Asia/Seoul
+    expose:
+      - "3306"
+    volumes:
+      - type: bind
+        source: /opt/houkago/mysql
+        target: /var/lib/mysql
+    networks:
+      - houkago-internal
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$${MYSQL_ROOT_PASSWORD} || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-docker}
+      HOUKAGO_DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:?Set MYSQL_DATABASE in server.env}
+      HOUKAGO_DB_USERNAME: ${MYSQL_USER:?Set MYSQL_USER in server.env}
+      HOUKAGO_DB_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in server.env}
+      HOUKAGO_RESYNC_ENABLED: ${HOUKAGO_RESYNC_ENABLED:-false}
+      HOUKAGO_RESYNC_POSTS_ROOT: ${HOUKAGO_RESYNC_POSTS_ROOT:-/workspace/houkago.posts}
+      HOUKAGO_RESYNC_COMMIT_HASH: ${HOUKAGO_RESYNC_COMMIT_HASH:-}
+      SERVER_PORT: 8080
+      TZ: Asia/Seoul
+    ports:
+      - "127.0.0.1:${APP_HOST_PORT:-8080}:8080"
+    volumes:
+      - type: bind
+        source: /opt/houkago/posts
+        target: ${HOUKAGO_RESYNC_POSTS_ROOT:-/workspace/houkago.posts}
+        read_only: true
+    networks:
+      - houkago-internal
+    restart: unless-stopped
+
+networks:
+  houkago-internal:
+    driver: bridge

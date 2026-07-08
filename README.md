@@ -124,6 +124,70 @@ Stop the smoke test stack:
 docker compose --env-file .env -f compose.dev.yml down
 ```
 
+## OCI Backend Smoke Test
+
+The OCI smoke setup verifies the backend app and MySQL on the single VM before Nginx, HTTPS,
+frontend integration, scheduler, or webhook automation are added.
+
+Prerequisites on the OCI host:
+
+- Docker Engine and the Docker Compose plugin are installed.
+- `/opt/houkago/server` contains this repository.
+- `/opt/houkago/posts` contains a read-only checkout source for `houkago.posts`.
+- `/opt/houkago/env/server.env` exists only on the server and is not committed.
+
+The production smoke compose file is:
+
+```bash
+compose.prod.yml
+```
+
+Create the server-only env file from the example and replace placeholders on the server:
+
+```bash
+cp .env.prod.example /opt/houkago/env/server.env
+chmod 600 /opt/houkago/env/server.env
+```
+
+Before manual resync, check the posts checkout status and commit hash:
+
+```bash
+git -C /opt/houkago/posts status --short --branch
+git -C /opt/houkago/posts rev-parse HEAD
+```
+
+Use that commit hash as `HOUKAGO_RESYNC_COMMIT_HASH`.
+
+Run the backend smoke stack from `/opt/houkago/server`:
+
+```bash
+docker compose --env-file /opt/houkago/env/server.env -f compose.prod.yml up -d --build
+```
+
+Security boundary for this smoke stack:
+
+- MySQL is not published to the host.
+- Spring Boot is bound to `127.0.0.1:8080` only.
+- `/opt/houkago/posts` is mounted read-only at `/workspace/houkago.posts`.
+- Nginx and HTTPS are intentionally left for the next deployment phase.
+
+Useful smoke checks:
+
+```bash
+docker compose --env-file /opt/houkago/env/server.env -f compose.prod.yml ps
+docker compose --env-file /opt/houkago/env/server.env -f compose.prod.yml logs --tail=100 app
+curl -sS http://127.0.0.1:8080/actuator/health
+curl -sS "http://127.0.0.1:8080/api/posts?size=3"
+sudo ss -tulpn
+```
+
+The app logs should show Flyway migration and the manual resync summary. The list API should not
+return `rawBody`; detail responses for public posts include `rawBody`.
+
+On the OCI ARM server, the first Docker build can take a while because Gradle dependencies are
+downloaded inside the Docker build. If that becomes too slow, consider a later Host-build plus thin
+runtime image workflow instead of changing this smoke baseline immediately.
+
 ## Verification
 
 ```bash
