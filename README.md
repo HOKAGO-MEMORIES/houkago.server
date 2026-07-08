@@ -171,6 +171,9 @@ Security boundary for this smoke stack:
 - `/opt/houkago/posts` is mounted read-only at `/workspace/houkago.posts`.
 - Nginx and HTTPS are intentionally left for the next deployment phase.
 
+The `127.0.0.1:8080` binding is intentional network hardening. The app should not be reachable
+directly from the public internet; Nginx will become the public ingress on 80/443 in a later phase.
+
 Useful smoke checks:
 
 ```bash
@@ -183,6 +186,31 @@ sudo ss -tulpn
 
 The app logs should show Flyway migration and the manual resync summary. The list API should not
 return `rawBody`; detail responses for public posts include `rawBody`.
+
+Latest OCI smoke result:
+
+```text
+candidateCount=265
+createdCount=265
+updatedCount=0
+touchedCount=0
+totalUpsertedCount=265
+deletedCount=0
+
+DB rows:
+total=265
+active/public=258
+active/private=7
+
+API:
+GET /actuator/health -> UP
+GET /api/posts?size=3 -> 200
+GET /api/posts/{slug} -> 200
+```
+
+MySQL 8.4 emitted a Flyway compatibility warning during smoke. This is not a smoke blocker because
+migration, schema creation, manual resync, and API checks succeeded. Before production traffic,
+revisit whether to keep MySQL 8.4 with a Flyway upgrade or pin MySQL to the 8.0 series.
 
 On the OCI ARM server, the first Docker build can take a while because Gradle dependencies are
 downloaded inside the Docker build. If that becomes too slow, consider a later Host-build plus thin
@@ -203,7 +231,7 @@ The repository integration test requires Docker because it starts a MySQL Testco
 ## Not Implemented Yet
 
 - automatic Git commit hash lookup
-- production Docker Compose, Nginx config, and deployment automation
+- Nginx config, HTTPS, and deployment automation
 - webhook, incremental sync, and frontend revalidation
 
 ## Reference Documentation
