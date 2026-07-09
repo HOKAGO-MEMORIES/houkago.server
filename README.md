@@ -212,6 +212,26 @@ MySQL 8.4 emitted a Flyway compatibility warning during smoke. This is not a smo
 migration, schema creation, manual resync, and API checks succeeded. Before production traffic,
 revisit whether to keep MySQL 8.4 with a Flyway upgrade or pin MySQL to the 8.0 series.
 
+## OCI Nginx HTTP Preflight
+
+`api.houkago.moe` is the planned backend API subdomain.
+
+Current preflight status:
+
+- host Nginx is installed
+- `/etc/nginx/sites-available/api.houkago.moe` proxies HTTP 80 to `http://127.0.0.1:8080`
+- `/etc/nginx/sites-enabled/api.houkago.moe` enables the site
+- internal Host header smoke passed for `/actuator/health` and `/api/posts?size=1`
+- Spring Boot remains bound to `127.0.0.1:8080`
+- MySQL remains unpublished to the host
+- HTTPS and Certbot are not configured yet
+
+External HTTP smoke still depends on DNS and ingress/firewall readiness:
+
+- `api.houkago.moe` A record should point to the OCI instance
+- OCI Security List or NSG should allow 80/tcp
+- OS firewall rules should allow 80/tcp
+
 On the OCI ARM server, the first Docker build can take a while because Gradle dependencies are
 downloaded inside the Docker build. If that becomes too slow, consider a later Host-build plus thin
 runtime image workflow instead of changing this smoke baseline immediately.
