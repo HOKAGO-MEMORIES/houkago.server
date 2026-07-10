@@ -126,8 +126,9 @@ docker compose --env-file .env -f compose.dev.yml down
 
 ## OCI Backend Smoke Test
 
-The OCI smoke setup verifies the backend app and MySQL on the single VM before Nginx, HTTPS,
-frontend integration, scheduler, or webhook automation are added.
+The OCI smoke setup verifies the backend app and MySQL on the single VM. Host Nginx is managed
+outside this Compose stack; HTTPS, frontend integration, scheduler, and webhook automation remain
+separate phases.
 
 Prerequisites on the OCI host:
 
@@ -169,10 +170,10 @@ Security boundary for this smoke stack:
 - MySQL is not published to the host.
 - Spring Boot is bound to `127.0.0.1:8080` only.
 - `/opt/houkago/posts` is mounted read-only at `/workspace/houkago.posts`.
-- Nginx and HTTPS are intentionally left for the next deployment phase.
+- Nginx is a host service outside this Compose stack, and HTTPS remains deferred.
 
 The `127.0.0.1:8080` binding is intentional network hardening. The app should not be reachable
-directly from the public internet; Nginx will become the public ingress on 80/443 in a later phase.
+directly from the public internet; host Nginx is the public HTTP ingress on port 80.
 
 Useful smoke checks:
 
@@ -212,25 +213,28 @@ MySQL 8.4 emitted a Flyway compatibility warning during smoke. This is not a smo
 migration, schema creation, manual resync, and API checks succeeded. Before production traffic,
 revisit whether to keep MySQL 8.4 with a Flyway upgrade or pin MySQL to the 8.0 series.
 
-## OCI Nginx HTTP Preflight
+## OCI Nginx HTTP Ingress
 
-`api.houkago.moe` is the planned backend API subdomain.
+`api.houkago.moe` is the public backend API subdomain.
 
-Current preflight status:
+Current ingress status:
 
 - host Nginx is installed
 - `/etc/nginx/sites-available/api.houkago.moe` proxies HTTP 80 to `http://127.0.0.1:8080`
 - `/etc/nginx/sites-enabled/api.houkago.moe` enables the site
-- internal Host header smoke passed for `/actuator/health` and `/api/posts?size=1`
+- internal and external `/api/posts?size=1` smoke passed with HTTP 200
+- list responses do not expose `rawBody`
+- Nginx returns 404 for `/actuator`, `/actuator/`, `/actuator/health`, and `/actuator/health/`
 - Spring Boot remains bound to `127.0.0.1:8080`
 - MySQL remains unpublished to the host
+- Docker and Nginx services are enabled and active
+- app and MySQL containers use the `unless-stopped` restart policy
 - HTTPS and Certbot are not configured yet
 
-External HTTP smoke still depends on DNS and ingress/firewall readiness:
-
-- `api.houkago.moe` A record should point to the OCI instance
-- OCI Security List or NSG should allow 80/tcp
-- OS firewall rules should allow 80/tcp
+The DNS A record and OCI TCP 80 ingress are verified. The host TCP 80 allow rule currently exists
+in the live `iptables-nft` INPUT chain. Firewall persistence across reboot is still pending because
+`netfilter-persistent` is not currently installed; the existing `/etc/iptables/rules.v4` was not
+modified.
 
 On the OCI ARM server, the first Docker build can take a while because Gradle dependencies are
 downloaded inside the Docker build. If that becomes too slow, consider a later Host-build plus thin
@@ -251,7 +255,7 @@ The repository integration test requires Docker because it starts a MySQL Testco
 ## Not Implemented Yet
 
 - automatic Git commit hash lookup
-- Nginx config, HTTPS, and deployment automation
+- HTTPS and deployment automation
 - webhook, incremental sync, and frontend revalidation
 
 ## Reference Documentation
