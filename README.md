@@ -231,10 +231,13 @@ Current ingress status:
 - app and MySQL containers use the `unless-stopped` restart policy
 - HTTPS and Certbot are not configured yet
 
-The DNS A record and OCI TCP 80 ingress are verified. The host TCP 80 allow rule currently exists
-in the live `iptables-nft` INPUT chain. Firewall persistence across reboot is still pending because
-`netfilter-persistent` is not currently installed; the existing `/etc/iptables/rules.v4` was not
-modified.
+The DNS A record and OCI TCP 80 ingress are verified. The host TCP 80 allow rule is persisted with
+`netfilter-persistent` and a minimal `/etc/iptables/rules.v4`. Docker runtime chains are excluded
+from that file. A planned reboot verified automatic recovery of SSH, the firewall rule, Docker,
+Nginx, MySQL, Spring Boot, the external post API, and Actuator blocking.
+
+The reboot-required package was `apparmor`; the kernel remained `6.17.0-1018-oracle` before and
+after reboot. HTTPS, Certbot, TCP 443 host ingress, and remaining security updates are deferred.
 
 On the OCI ARM server, the first Docker build can take a while because Gradle dependencies are
 downloaded inside the Docker build. If that becomes too slow, consider a later Host-build plus thin
