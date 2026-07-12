@@ -231,14 +231,18 @@ Current ingress status:
 - Docker and Nginx services are enabled and active
 - app and MySQL containers use the `unless-stopped` restart policy
 - Certbot Snap automatic renewal is enabled and the renewal dry-run passes
+- a planned reboot verified automatic recovery of TCP 80/443, Nginx HTTP/HTTPS, Docker, MySQL,
+  Spring Boot, the external HTTPS API, redirect behavior, and Actuator blocking
 
 The DNS A record and OCI TCP 80 ingress are verified. The host TCP 80 allow rule is persisted with
 `netfilter-persistent` and a minimal `/etc/iptables/rules.v4`. Docker runtime chains are excluded
 from that file. A planned reboot verified automatic recovery of SSH, the firewall rule, Docker,
 Nginx, MySQL, Spring Boot, the external post API, and Actuator blocking.
 
-TCP 443 is present in both the live INPUT chain and the minimal persistent `rules.v4`. This HTTPS
-phase did not repeat the reboot recovery test for the newly added 443 rule.
+TCP 443 is present in both the live INPUT chain and the minimal persistent `rules.v4`. A planned
+reboot verified that TCP 80/443, the Nginx HTTP/HTTPS listeners, app/MySQL containers, external HTTPS
+list/detail API, HTTP redirect, certificate connection, and Certbot renewal schedule recover without
+manual service restarts. Spring Boot remains loopback-only and MySQL remains unpublished to the host.
 
 The reboot-required package was `apparmor`; the kernel remained `6.17.0-1018-oracle` before and
 after reboot. HSTS, frontend/CORS integration, and remaining security updates are deferred.
