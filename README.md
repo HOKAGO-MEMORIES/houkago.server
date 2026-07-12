@@ -213,7 +213,7 @@ MySQL 8.4 emitted a Flyway compatibility warning during smoke. This is not a smo
 migration, schema creation, manual resync, and API checks succeeded. Before production traffic,
 revisit whether to keep MySQL 8.4 with a Flyway upgrade or pin MySQL to the 8.0 series.
 
-## OCI Nginx HTTP Ingress
+## OCI Nginx HTTPS Ingress
 
 `api.houkago.moe` is the public backend API subdomain.
 
@@ -222,22 +222,26 @@ Current ingress status:
 - host Nginx is installed
 - `/etc/nginx/sites-available/api.houkago.moe` proxies HTTP 80 to `http://127.0.0.1:8080`
 - `/etc/nginx/sites-enabled/api.houkago.moe` enables the site
-- internal and external `/api/posts?size=1` smoke passed with HTTP 200
+- external HTTPS list/detail smoke passed with HTTP 200
 - list responses do not expose `rawBody`
-- Nginx returns 404 for `/actuator`, `/actuator/`, `/actuator/health`, and `/actuator/health/`
+- HTTP redirects to HTTPS with 301
+- Nginx returns 404 for Actuator variants over HTTPS and after HTTP redirect
 - Spring Boot remains bound to `127.0.0.1:8080`
 - MySQL remains unpublished to the host
 - Docker and Nginx services are enabled and active
 - app and MySQL containers use the `unless-stopped` restart policy
-- HTTPS and Certbot are not configured yet
+- Certbot Snap automatic renewal is enabled and the renewal dry-run passes
 
 The DNS A record and OCI TCP 80 ingress are verified. The host TCP 80 allow rule is persisted with
 `netfilter-persistent` and a minimal `/etc/iptables/rules.v4`. Docker runtime chains are excluded
 from that file. A planned reboot verified automatic recovery of SSH, the firewall rule, Docker,
 Nginx, MySQL, Spring Boot, the external post API, and Actuator blocking.
 
+TCP 443 is present in both the live INPUT chain and the minimal persistent `rules.v4`. This HTTPS
+phase did not repeat the reboot recovery test for the newly added 443 rule.
+
 The reboot-required package was `apparmor`; the kernel remained `6.17.0-1018-oracle` before and
-after reboot. HTTPS, Certbot, TCP 443 host ingress, and remaining security updates are deferred.
+after reboot. HSTS, frontend/CORS integration, and remaining security updates are deferred.
 
 On the OCI ARM server, the first Docker build can take a while because Gradle dependencies are
 downloaded inside the Docker build. If that becomes too slow, consider a later Host-build plus thin
@@ -258,7 +262,7 @@ The repository integration test requires Docker because it starts a MySQL Testco
 ## Not Implemented Yet
 
 - automatic Git commit hash lookup
-- HTTPS and deployment automation
+- deployment automation
 - webhook, incremental sync, and frontend revalidation
 
 ## Reference Documentation
