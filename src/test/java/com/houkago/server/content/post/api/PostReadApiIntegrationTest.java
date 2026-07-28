@@ -101,6 +101,7 @@ class PostReadApiIntegrationTest {
 				PostSourceStatus.class,
 				PostSyncStatus.class,
 				PostVisibility.class,
+				Boolean.class,
 				org.springframework.data.domain.Pageable.class);
 		Query query = method.getAnnotation(Query.class);
 
@@ -108,6 +109,99 @@ class PostReadApiIntegrationTest {
 		assertThat(query.value()).contains("PostReadSummaryProjection");
 		assertThat(query.value()).doesNotContain("rawBody")
 				.doesNotContain("raw_body");
+	}
+
+	@Test
+	void listWithoutFeaturedParameterIncludesFeaturedAndNonFeaturedPosts() throws Exception {
+		repository.save(featured(publicPost("featured-post", LocalDate.of(2026, 7, 5), "featured body")));
+		repository.save(publicPost("regular-post", LocalDate.of(2026, 7, 4), "regular body"));
+
+		ResponseEntity<String> response = restTemplate.getForEntity("/api/posts?size=10", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode content = objectMapper.readTree(response.getBody()).path("content");
+		assertThat(textValues(content, "slug")).containsExactly("featured-post", "regular-post");
+	}
+
+	@Test
+	void featuredTrueReturnsOnlyPublicPublishedActiveFeaturedPosts() throws Exception {
+		repository.save(featured(publicPost("public-featured", LocalDate.of(2026, 7, 4), "public body")));
+		repository.save(publicPost("public-regular", LocalDate.of(2026, 7, 5), "regular body"));
+		repository.save(featured(post("private-featured", LocalDate.of(2026, 7, 5),
+				PostSourceStatus.PUBLISHED, PostSyncStatus.ACTIVE, PostVisibility.PRIVATE)));
+		repository.save(featured(post("draft-featured", LocalDate.of(2026, 7, 5),
+				PostSourceStatus.DRAFT, PostSyncStatus.ACTIVE, PostVisibility.PRIVATE)));
+		repository.save(featured(post("deleted-featured", LocalDate.of(2026, 7, 5),
+				PostSourceStatus.PUBLISHED, PostSyncStatus.DELETED, PostVisibility.PRIVATE)));
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?featured=true&page=0&size=10", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(textValues(root.path("content"), "slug")).containsExactly("public-featured");
+		assertThat(root.path("content").get(0).path("featured").asBoolean()).isTrue();
+		assertThat(root.path("totalElements").asInt()).isEqualTo(1);
+	}
+
+	@Test
+	void featuredFalseReturnsOnlyPublicNonFeaturedPosts() throws Exception {
+		repository.save(featured(publicPost("public-featured", LocalDate.of(2026, 7, 5), "featured body")));
+		repository.save(publicPost("public-regular", LocalDate.of(2026, 7, 4), "regular body"));
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?featured=false&page=0&size=10", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(textValues(root.path("content"), "slug")).containsExactly("public-regular");
+		assertThat(root.path("content").get(0).path("featured").asBoolean()).isFalse();
+	}
+
+	@Test
+	void featuredListSortsByPostDateDescThenIdDesc() throws Exception {
+		PostReadModel firstSameDate = repository.save(featured(publicPost("first-featured",
+				LocalDate.of(2026, 7, 4), "first body")));
+		PostReadModel secondSameDate = repository.save(featured(publicPost("second-featured",
+				LocalDate.of(2026, 7, 4), "second body")));
+		repository.save(featured(publicPost("older-featured", LocalDate.of(2026, 7, 3), "older body")));
+		assertThat(firstSameDate.getId()).isLessThan(secondSameDate.getId());
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?featured=true&page=0&size=10", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode content = objectMapper.readTree(response.getBody()).path("content");
+		assertThat(textValues(content, "slug"))
+				.containsExactly("second-featured", "first-featured", "older-featured");
+	}
+
+	@Test
+	void featuredListReturnsFilteredPaginationMetadata() throws Exception {
+		for (int index = 1; index <= 4; index++) {
+			repository.save(featured(publicPost("featured-page-" + index,
+					LocalDate.of(2026, 7, 6 - index), "body " + index)));
+		}
+		repository.save(publicPost("regular-post", LocalDate.of(2026, 7, 6), "regular body"));
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?featured=true&page=0&size=3", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(root.path("content")).hasSize(3);
+		assertThat(root.path("totalElements").asInt()).isEqualTo(4);
+		assertThat(root.path("totalPages").asInt()).isEqualTo(2);
+		assertThat(root.path("number").asInt()).isZero();
+		assertThat(root.path("size").asInt()).isEqualTo(3);
+	}
+
+	@Test
+	void invalidFeaturedParameterReturnsBadRequest() {
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?featured=invalid&page=0&size=3", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 	}
 
 	@Test
@@ -190,6 +284,11 @@ class PostReadApiIntegrationTest {
 		PostReadModel post = post(slug, postDate, PostSourceStatus.PUBLISHED, PostSyncStatus.ACTIVE,
 				PostVisibility.PUBLIC);
 		post.setRawBody(rawBody);
+		return post;
+	}
+
+	private static PostReadModel featured(PostReadModel post) {
+		post.setFeatured(true);
 		return post;
 	}
 

@@ -54,6 +54,7 @@ public interface PostReadModelRepository extends JpaRepository<PostReadModel, Lo
 					where p.sourceStatus = :sourceStatus
 					and p.syncStatus = :syncStatus
 					and p.visibility = :visibility
+					and (:featured is null or p.featured = :featured)
 					order by p.postDate desc, p.id desc
 					""",
 			countQuery = """
@@ -62,11 +63,13 @@ public interface PostReadModelRepository extends JpaRepository<PostReadModel, Lo
 					where p.sourceStatus = :sourceStatus
 					and p.syncStatus = :syncStatus
 					and p.visibility = :visibility
+					and (:featured is null or p.featured = :featured)
 					""")
 	Page<PostReadSummaryProjection> findPublicPostSummaries(
 			PostSourceStatus sourceStatus,
 			PostSyncStatus syncStatus,
 			PostVisibility visibility,
+			Boolean featured,
 			Pageable pageable);
 
 	@Query("""
