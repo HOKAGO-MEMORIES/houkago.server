@@ -1,10 +1,10 @@
 package com.houkago.server.content.post.sync;
 
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 
+import com.houkago.server.content.post.readmodel.PostReadModelCandidatePreflight;
 import com.houkago.server.content.post.readmodel.PostReadModelRetirementService;
 import com.houkago.server.content.post.readmodel.PostReadModelUpsertService;
 import com.houkago.server.content.post.source.PostMarkdownParser;
@@ -14,7 +14,6 @@ import com.houkago.server.content.post.source.PostSourceScanner;
 
 @Configuration
 @Profile("!test")
-@EnableConfigurationProperties(PostManualFullResyncProperties.class)
 public class PostManualFullResyncConfiguration {
 
 	@Bean
@@ -42,15 +41,9 @@ public class PostManualFullResyncConfiguration {
 	@Bean
 	PostManualFullResyncService postManualFullResyncService(
 			PostSourceCandidateLoader candidateLoader,
+			PostReadModelCandidatePreflight candidatePreflight,
 			PostReadModelUpsertService upsertService,
 			PostReadModelRetirementService retirementService) {
-		return new PostManualFullResyncService(candidateLoader, upsertService, retirementService);
-	}
-
-	@Bean
-	PostManualFullResyncRunner postManualFullResyncRunner(
-			PostManualFullResyncService resyncService,
-			PostManualFullResyncProperties properties) {
-		return new PostManualFullResyncRunner(resyncService, properties);
+		return new PostManualFullResyncService(candidateLoader, candidatePreflight, upsertService, retirementService);
 	}
 }

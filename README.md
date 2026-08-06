@@ -64,6 +64,37 @@ values as `sync_status = 'deleted'` and `visibility = 'private'`.
 The runner does not expose an HTTP sync endpoint and does not calculate the Git commit hash
 automatically.
 
+### One-shot Sync Mode
+
+The `sync` Spring profile runs the same full resync service once with no web server, prints a
+machine-readable result, and exits. The existing startup runner remains available outside the
+`sync` profile for compatibility.
+
+The production Compose file exposes this mode through an opt-in service that is not started by a
+normal `up` command:
+
+```bash
+docker compose \
+  --env-file /opt/houkago/env/server.env \
+  -f compose.prod.yml \
+  --profile sync \
+  run --rm sync
+```
+
+The one-shot service uses the same application image, MySQL network, resync environment contract,
+and read-only posts mount as the always-on app. It publishes no port and has no restart policy.
+Flyway is disabled in one-shot mode so the always-on app remains the migration owner; run the
+one-shot only after the deployed app has established the expected schema.
+
+Before any row is written, all loaded candidates pass metadata mapping, checksum calculation, and
+duplicate slug/source-path validation. Upserts and retirement still use separate transactions, so
+a later database conflict or write failure can leave a partially applied run. Atomic import or a
+run-level transaction remains deferred.
+
+This execution path is implemented and locally testable. OCI deployment and manual one-shot smoke
+verification are the next operational step; the production app startup-sync setting should remain
+unchanged until that verification succeeds.
+
 ## Public Read API MVP
 
 The current public post read API exposes only rows that are published, active, and public:

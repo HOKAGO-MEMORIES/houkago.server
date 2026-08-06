@@ -6,7 +6,6 @@ import java.util.Optional;
 
 import org.springframework.transaction.annotation.Transactional;
 
-import com.houkago.server.content.post.metadata.PostMetadataInput;
 import com.houkago.server.content.post.source.ParsedPostCandidate;
 
 public class PostReadModelUpsertService {
@@ -27,34 +26,34 @@ public class PostReadModelUpsertService {
 			String commitHash,
 			Instant syncedAt) {
 		Objects.requireNonNull(candidate, "candidate is required");
+		return upsertPreparedCandidate(processor.prepare(candidate), commitHash, syncedAt);
+	}
+
+	@Transactional
+	public PostReadModelUpsertResult upsertPreparedCandidate(
+			PostReadModelPreparedCandidate candidate,
+			String commitHash,
+			Instant syncedAt) {
+		Objects.requireNonNull(candidate, "prepared candidate is required");
 		String requiredCommitHash = requireText("commitHash", commitHash);
 		Objects.requireNonNull(syncedAt, "syncedAt is required");
 
 		Optional<PostReadModel> rowBySourcePath = repository.findBySourcePath(candidate.sourcePath());
-		Optional<PostReadModel> rowBySlug = findBySlug(candidate);
+		Optional<PostReadModel> rowBySlug = repository.findBySlug(candidate.metadata().slug());
 		Optional<PostReadModel> existing = selectExistingRow(candidate, rowBySourcePath, rowBySlug);
-		PostReadModelPreparedCandidate preparedCandidate = processor.prepare(candidate);
 
-		PostReadModelUpsertStatus status = determineStatus(existing, preparedCandidate);
+		PostReadModelUpsertStatus status = determineStatus(existing, candidate);
 		PostReadModel post = switch (status) {
-			case CREATED -> processor.create(preparedCandidate, requiredCommitHash, syncedAt);
-			case UPDATED -> processor.update(existing.orElseThrow(), preparedCandidate, requiredCommitHash, syncedAt);
+			case CREATED -> processor.create(candidate, requiredCommitHash, syncedAt);
+			case UPDATED -> processor.update(existing.orElseThrow(), candidate, requiredCommitHash, syncedAt);
 			case TOUCHED -> processor.touch(existing.orElseThrow(), requiredCommitHash, syncedAt);
 		};
 
 		return new PostReadModelUpsertResult(repository.save(post), status);
 	}
 
-	private Optional<PostReadModel> findBySlug(ParsedPostCandidate candidate) {
-		PostMetadataInput metadataInput = candidate.metadataInput();
-		if (metadataInput == null || metadataInput.slug() == null || metadataInput.slug().isBlank()) {
-			return Optional.empty();
-		}
-		return repository.findBySlug(metadataInput.slug());
-	}
-
 	private static Optional<PostReadModel> selectExistingRow(
-			ParsedPostCandidate candidate,
+			PostReadModelPreparedCandidate candidate,
 			Optional<PostReadModel> rowBySourcePath,
 			Optional<PostReadModel> rowBySlug) {
 		if (rowBySourcePath.isPresent() && rowBySlug.isPresent()) {
@@ -64,7 +63,7 @@ public class PostReadModelUpsertService {
 				throw new PostReadModelUpsertConflictException("Post read model upsert conflict for sourcePath="
 						+ candidate.sourcePath()
 						+ ", slug="
-						+ candidate.metadataInput().slug()
+						+ candidate.metadata().slug()
 						+ ", sourcePathRowId="
 						+ sourcePathRow.getId()
 						+ ", slugRowId="

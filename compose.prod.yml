@@ -1,3 +1,9 @@
+x-houkago-server-image: &houkago-server-image
+  image: houkago-server:local
+  build:
+    context: .
+    dockerfile: Dockerfile
+
 services:
   mysql:
     image: mysql:8.4
@@ -28,9 +34,7 @@ services:
     restart: unless-stopped
 
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *houkago-server-image
     depends_on:
       mysql:
         condition: service_healthy
@@ -54,6 +58,30 @@ services:
     networks:
       - houkago-internal
     restart: unless-stopped
+
+  sync:
+    <<: *houkago-server-image
+    profiles:
+      - sync
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker,sync
+      HOUKAGO_DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:?Set MYSQL_DATABASE in server.env}
+      HOUKAGO_DB_USERNAME: ${MYSQL_USER:?Set MYSQL_USER in server.env}
+      HOUKAGO_DB_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in server.env}
+      HOUKAGO_RESYNC_ENABLED: "true"
+      HOUKAGO_RESYNC_POSTS_ROOT: ${HOUKAGO_RESYNC_POSTS_ROOT:-/workspace/houkago.posts}
+      HOUKAGO_RESYNC_COMMIT_HASH: ${HOUKAGO_RESYNC_COMMIT_HASH:-}
+      TZ: Asia/Seoul
+    volumes:
+      - type: bind
+        source: /opt/houkago/posts
+        target: ${HOUKAGO_RESYNC_POSTS_ROOT:-/workspace/houkago.posts}
+        read_only: true
+    networks:
+      - houkago-internal
 
 networks:
   houkago-internal:

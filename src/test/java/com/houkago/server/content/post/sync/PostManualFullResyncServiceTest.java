@@ -21,6 +21,8 @@ import org.mockito.InOrder;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.houkago.server.content.post.readmodel.PostReadModel;
+import com.houkago.server.content.post.readmodel.PostReadModelCandidatePreflight;
+import com.houkago.server.content.post.readmodel.PostReadModelPreparedCandidate;
 import com.houkago.server.content.post.readmodel.PostReadModelRetirementService;
 import com.houkago.server.content.post.readmodel.PostReadModelUpsertConflictException;
 import com.houkago.server.content.post.readmodel.PostReadModelUpsertResult;
@@ -30,6 +32,10 @@ import com.houkago.server.content.post.source.ParsedPostCandidate;
 import com.houkago.server.content.post.source.PostSourceCandidateLoader;
 import com.houkago.server.content.post.source.PostSourceScanException;
 import com.houkago.server.content.post.metadata.PostMetadataInput;
+import com.houkago.server.content.post.metadata.PostMetadataMapping;
+import com.houkago.server.content.post.policy.PostSourceStatus;
+import com.houkago.server.content.post.policy.PostSyncStatus;
+import com.houkago.server.content.post.policy.PostVisibility;
 
 class PostManualFullResyncServiceTest {
 
@@ -38,10 +44,12 @@ class PostManualFullResyncServiceTest {
 	private static final Instant SYNCED_AT = Instant.parse("2026-07-04T00:00:00Z");
 
 	private final PostSourceCandidateLoader candidateLoader = mock(PostSourceCandidateLoader.class);
+	private final PostReadModelCandidatePreflight candidatePreflight = mock(PostReadModelCandidatePreflight.class);
 	private final PostReadModelUpsertService upsertService = mock(PostReadModelUpsertService.class);
 	private final PostReadModelRetirementService retirementService = mock(PostReadModelRetirementService.class);
 	private final PostManualFullResyncService service = new PostManualFullResyncService(
 			candidateLoader,
+			candidatePreflight,
 			upsertService,
 			retirementService);
 
@@ -49,17 +57,21 @@ class PostManualFullResyncServiceTest {
 	void upsertsCandidatesSequentially() {
 		ParsedPostCandidate first = candidate("first-post", "blog/first-post/index.md");
 		ParsedPostCandidate second = candidate("second-post", "blog/second-post/index.md");
-		when(candidateLoader.load(POSTS_ROOT)).thenReturn(List.of(first, second));
-		when(upsertService.upsert(first, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.CREATED));
-		when(upsertService.upsert(second, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.UPDATED));
+		List<ParsedPostCandidate> candidates = List.of(first, second);
+		List<PostReadModelPreparedCandidate> prepared = stubPreflight(candidates);
+		when(candidateLoader.load(POSTS_ROOT)).thenReturn(candidates);
+		when(upsertService.upsertPreparedCandidate(prepared.get(0), COMMIT_HASH, SYNCED_AT))
+				.thenReturn(result(PostReadModelUpsertStatus.CREATED));
+		when(upsertService.upsertPreparedCandidate(prepared.get(1), COMMIT_HASH, SYNCED_AT))
+				.thenReturn(result(PostReadModelUpsertStatus.UPDATED));
 		when(retirementService.retireMissingSources(Set.of(first.sourcePath(), second.sourcePath()), COMMIT_HASH,
 				SYNCED_AT)).thenReturn(0);
 
 		service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT);
 
 		InOrder order = inOrder(upsertService, retirementService);
-		order.verify(upsertService).upsert(first, COMMIT_HASH, SYNCED_AT);
-		order.verify(upsertService).upsert(second, COMMIT_HASH, SYNCED_AT);
+		order.verify(upsertService).upsertPreparedCandidate(prepared.get(0), COMMIT_HASH, SYNCED_AT);
+		order.verify(upsertService).upsertPreparedCandidate(prepared.get(1), COMMIT_HASH, SYNCED_AT);
 		order.verify(retirementService).retireMissingSources(Set.of(first.sourcePath(), second.sourcePath()),
 				COMMIT_HASH, SYNCED_AT);
 		order.verifyNoMoreInteractions();
@@ -71,11 +83,17 @@ class PostManualFullResyncServiceTest {
 		ParsedPostCandidate second = candidate("updated-post", "blog/updated-post/index.md");
 		ParsedPostCandidate third = candidate("touched-post", "blog/touched-post/index.md");
 		ParsedPostCandidate fourth = candidate("another-created-post", "blog/another-created-post/index.md");
-		when(candidateLoader.load(POSTS_ROOT)).thenReturn(List.of(first, second, third, fourth));
-		when(upsertService.upsert(first, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.CREATED));
-		when(upsertService.upsert(second, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.UPDATED));
-		when(upsertService.upsert(third, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.TOUCHED));
-		when(upsertService.upsert(fourth, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.CREATED));
+		List<ParsedPostCandidate> candidates = List.of(first, second, third, fourth);
+		List<PostReadModelPreparedCandidate> prepared = stubPreflight(candidates);
+		when(candidateLoader.load(POSTS_ROOT)).thenReturn(candidates);
+		when(upsertService.upsertPreparedCandidate(prepared.get(0), COMMIT_HASH, SYNCED_AT))
+				.thenReturn(result(PostReadModelUpsertStatus.CREATED));
+		when(upsertService.upsertPreparedCandidate(prepared.get(1), COMMIT_HASH, SYNCED_AT))
+				.thenReturn(result(PostReadModelUpsertStatus.UPDATED));
+		when(upsertService.upsertPreparedCandidate(prepared.get(2), COMMIT_HASH, SYNCED_AT))
+				.thenReturn(result(PostReadModelUpsertStatus.TOUCHED));
+		when(upsertService.upsertPreparedCandidate(prepared.get(3), COMMIT_HASH, SYNCED_AT))
+				.thenReturn(result(PostReadModelUpsertStatus.CREATED));
 		when(retirementService.retireMissingSources(
 				Set.of(first.sourcePath(), second.sourcePath(), third.sourcePath(), fourth.sourcePath()),
 				COMMIT_HASH,
@@ -98,6 +116,7 @@ class PostManualFullResyncServiceTest {
 	@Test
 	void emptyCandidateListReturnsZeroSummary() {
 		when(candidateLoader.load(POSTS_ROOT)).thenReturn(List.of());
+		when(candidatePreflight.prepareAll(List.of())).thenReturn(List.of());
 
 		PostManualFullResyncResult result = service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT);
 
@@ -117,16 +136,19 @@ class PostManualFullResyncServiceTest {
 		ParsedPostCandidate first = candidate("a-post", "blog/a-post/index.md");
 		ParsedPostCandidate second = candidate("b-post", "blog/b-post/index.md");
 		ParsedPostCandidate third = candidate("c-post", "blog/c-post/index.md");
-		when(candidateLoader.load(POSTS_ROOT)).thenReturn(List.of(first, second, third));
-		when(upsertService.upsert(any(), any(), any())).thenReturn(result(PostReadModelUpsertStatus.UPDATED));
+		List<ParsedPostCandidate> candidates = List.of(first, second, third);
+		List<PostReadModelPreparedCandidate> prepared = stubPreflight(candidates);
+		when(candidateLoader.load(POSTS_ROOT)).thenReturn(candidates);
+		when(upsertService.upsertPreparedCandidate(any(), any(), any()))
+				.thenReturn(result(PostReadModelUpsertStatus.UPDATED));
 		when(retirementService.retireMissingSources(any(), any(), any())).thenReturn(0);
 
 		service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT);
 
 		InOrder order = inOrder(upsertService);
-		order.verify(upsertService).upsert(first, COMMIT_HASH, SYNCED_AT);
-		order.verify(upsertService).upsert(second, COMMIT_HASH, SYNCED_AT);
-		order.verify(upsertService).upsert(third, COMMIT_HASH, SYNCED_AT);
+		order.verify(upsertService).upsertPreparedCandidate(prepared.get(0), COMMIT_HASH, SYNCED_AT);
+		order.verify(upsertService).upsertPreparedCandidate(prepared.get(1), COMMIT_HASH, SYNCED_AT);
+		order.verify(upsertService).upsertPreparedCandidate(prepared.get(2), COMMIT_HASH, SYNCED_AT);
 	}
 
 	@Test
@@ -145,13 +167,31 @@ class PostManualFullResyncServiceTest {
 		ParsedPostCandidate second = candidate("second-post", "blog/second-post/index.md");
 		ParsedPostCandidate third = candidate("third-post", "blog/third-post/index.md");
 		PostReadModelUpsertConflictException exception = new PostReadModelUpsertConflictException("conflict");
-		when(candidateLoader.load(POSTS_ROOT)).thenReturn(List.of(first, second, third));
-		when(upsertService.upsert(first, COMMIT_HASH, SYNCED_AT)).thenReturn(result(PostReadModelUpsertStatus.CREATED));
-		when(upsertService.upsert(second, COMMIT_HASH, SYNCED_AT)).thenThrow(exception);
+		List<ParsedPostCandidate> candidates = List.of(first, second, third);
+		List<PostReadModelPreparedCandidate> prepared = stubPreflight(candidates);
+		when(candidateLoader.load(POSTS_ROOT)).thenReturn(candidates);
+		when(upsertService.upsertPreparedCandidate(prepared.get(0), COMMIT_HASH, SYNCED_AT))
+				.thenReturn(result(PostReadModelUpsertStatus.CREATED));
+		when(upsertService.upsertPreparedCandidate(prepared.get(1), COMMIT_HASH, SYNCED_AT)).thenThrow(exception);
 
 		assertThatThrownBy(() -> service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT))
 				.isSameAs(exception);
-		verify(upsertService, never()).upsert(third, COMMIT_HASH, SYNCED_AT);
+		verify(upsertService, never()).upsertPreparedCandidate(prepared.get(2), COMMIT_HASH, SYNCED_AT);
+		verify(retirementService, never()).retireMissingSources(any(), any(), any());
+	}
+
+	@Test
+	void preflightFailureHappensBeforeAnyDatabaseWrite() {
+		ParsedPostCandidate first = candidate("first-post", "blog/first-post/index.md");
+		ParsedPostCandidate second = candidate("duplicate-post", "blog/duplicate-post/index.md");
+		List<ParsedPostCandidate> candidates = List.of(first, second);
+		IllegalArgumentException exception = new IllegalArgumentException("Duplicate post candidate slug: duplicate-post");
+		when(candidateLoader.load(POSTS_ROOT)).thenReturn(candidates);
+		when(candidatePreflight.prepareAll(candidates)).thenThrow(exception);
+
+		assertThatThrownBy(() -> service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT))
+				.isSameAs(exception);
+		verify(upsertService, never()).upsertPreparedCandidate(any(), any(), any());
 		verify(retirementService, never()).retireMissingSources(any(), any(), any());
 	}
 
@@ -210,5 +250,37 @@ class PostManualFullResyncServiceTest {
 
 	private static PostReadModelUpsertResult result(PostReadModelUpsertStatus status) {
 		return new PostReadModelUpsertResult(mock(PostReadModel.class), status);
+	}
+
+	private List<PostReadModelPreparedCandidate> stubPreflight(List<ParsedPostCandidate> candidates) {
+		List<PostReadModelPreparedCandidate> prepared = candidates.stream()
+				.map(PostManualFullResyncServiceTest::preparedCandidate)
+				.toList();
+		when(candidatePreflight.prepareAll(candidates)).thenReturn(prepared);
+		return prepared;
+	}
+
+	private static PostReadModelPreparedCandidate preparedCandidate(ParsedPostCandidate candidate) {
+		PostMetadataInput input = candidate.metadataInput();
+		return new PostReadModelPreparedCandidate(
+				new PostMetadataMapping(
+						input.title(),
+						input.slug(),
+						java.time.LocalDate.parse(input.date()),
+						input.description(),
+						input.category(),
+						PostSourceStatus.PUBLISHED,
+						PostSyncStatus.ACTIVE,
+						PostVisibility.PUBLIC,
+						input.tags(),
+						null,
+						null,
+						null,
+						false,
+						null,
+						null),
+				candidate.rawBody(),
+				candidate.sourcePath(),
+				"checksum-" + input.slug());
 	}
 }
