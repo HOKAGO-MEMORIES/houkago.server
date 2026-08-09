@@ -61,11 +61,8 @@ services:
         target: ${HOUKAGO_RESYNC_POSTS_ROOT:-/workspace/houkago.posts}
         read_only: true
       - type: bind
-        source: /opt/houkago/sync-jobs/.tmp
-        target: ${HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT:-/workspace/sync-jobs}/.tmp
-      - type: bind
-        source: /opt/houkago/sync-jobs/incoming
-        target: ${HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT:-/workspace/sync-jobs}/incoming
+        source: /opt/houkago/sync-jobs
+        target: ${HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT:-/workspace/sync-jobs}
       - type: bind
         source: /opt/houkago/sync-jobs/processing
         target: ${HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT:-/workspace/sync-jobs}/processing
