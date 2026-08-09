@@ -22,6 +22,13 @@ log() {
 	printf 'event=houkago_content_sync_worker %s\n' "$*"
 }
 
+run_checkout_git() {
+	(
+		umask 0022
+		git -C "$POSTS_ROOT" "$@"
+	)
+}
+
 move_without_overwrite() {
 	local source_path="$1"
 	local target_path="$2"
@@ -101,6 +108,35 @@ print(commit_sha)
 PY
 }
 
+verify_checkout_readable() {
+	(
+		cd "$SERVER_ROOT" || exit 1
+		docker compose \
+			--env-file "$SERVER_ENV" \
+			-f "$COMPOSE_FILE" \
+			--profile sync \
+			run --rm --no-deps -T --entrypoint /bin/sh sync -eu -c '
+				root="${HOUKAGO_RESYNC_POSTS_ROOT:?}"
+				if [ ! -d "$root" ] || [ ! -x "$root" ]; then
+					printf "HOUKAGO_UNREADABLE_PATH=.\n"
+					exit 1
+				fi
+
+				unreadable_path="$(find "$root" -type f -name index.md ! -readable -print -quit)" || {
+					printf "HOUKAGO_UNREADABLE_PATH=.\n"
+					exit 1
+				}
+				if [ -n "$unreadable_path" ]; then
+					case "$unreadable_path" in
+						"$root"/*) unreadable_path="${unreadable_path#"$root"/}" ;;
+					esac
+					printf "HOUKAGO_UNREADABLE_PATH=%s\n" "$unreadable_path"
+					exit 1
+				fi
+			'
+	)
+}
+
 verify_public_api() {
 	local health_response list_status featured_status detail_status
 
@@ -147,7 +183,8 @@ run_one_shot_sync() {
 process_job() {
 	local incoming_path="$1"
 	local validation_output delivery_id commit_sha base_name processing_path
-	local git_status current_branch origin_main current_head checkout_head
+	local git_status current_branch origin_main current_head checkout_head readability_output
+	local unreadable_path quoted_path
 
 	base_name="$(basename -- "$incoming_path")"
 	if [[ ! -f "$incoming_path" || -L "$incoming_path" ]]; then
@@ -190,7 +227,7 @@ process_job() {
 		mark_failed "$processing_path" "unexpected_branch" || true
 		return 1
 	fi
-	if ! git -C "$POSTS_ROOT" fetch --quiet origin main; then
+	if ! run_checkout_git fetch --quiet origin main; then
 		mark_failed "$processing_path" "git_fetch" || true
 		return 1
 	fi
@@ -222,7 +259,7 @@ process_job() {
 		mark_failed "$processing_path" "non_fast_forward" || true
 		return 1
 	fi
-	if ! git -C "$POSTS_ROOT" merge --ff-only --quiet "$origin_main"; then
+	if ! run_checkout_git merge --ff-only --quiet "$origin_main"; then
 		mark_failed "$processing_path" "git_merge" || true
 		return 1
 	fi
@@ -236,6 +273,17 @@ process_job() {
 	fi
 	if ! git -C "$POSTS_ROOT" merge-base --is-ancestor "$commit_sha" "$checkout_head"; then
 		mark_failed "$processing_path" "checkout_missing_job_commit" || true
+		return 1
+	fi
+	if ! readability_output="$(verify_checkout_readable 2>&1)"; then
+		unreadable_path="$(printf '%s\n' "$readability_output" \
+			| sed -n 's/^HOUKAGO_UNREADABLE_PATH=//p' \
+			| tail -n 1)"
+		if [[ -n "$unreadable_path" ]]; then
+			printf -v quoted_path '%q' "$unreadable_path"
+			log "status=FAILED reason=checkout_unreadable path=${quoted_path} job=${base_name}"
+		fi
+		mark_failed "$processing_path" "checkout_unreadable" || true
 		return 1
 	fi
 
@@ -253,6 +301,58 @@ process_job() {
 	fi
 
 	log "status=SUCCESS deliveryId=${delivery_id} commitSha=${checkout_head}"
+	return 0
+}
+
+retry_failed_job() {
+	local delivery_id="$1"
+	local failed_path incoming_path validation_output validated_delivery_id
+	local timestamp history_path
+
+	if [[ ! "$delivery_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+		log "status=FAILED reason=retry_invalid_delivery_id"
+		return 1
+	fi
+	failed_path="${FAILED_DIRECTORY}/${delivery_id}.json"
+	incoming_path="${INCOMING_DIRECTORY}/${delivery_id}.json"
+	if [[ ! -f "$failed_path" || -L "$failed_path" ]]; then
+		log "status=FAILED reason=retry_job_not_found deliveryId=${delivery_id}"
+		return 1
+	fi
+	if ! validation_output="$(validate_job "$failed_path" 2>/dev/null)"; then
+		log "status=FAILED reason=retry_invalid_job deliveryId=${delivery_id}"
+		return 1
+	fi
+	validated_delivery_id="$(printf '%s\n' "$validation_output" | sed -n '1p')"
+	if [[ "$validated_delivery_id" != "$delivery_id" ]]; then
+		log "status=FAILED reason=retry_delivery_mismatch deliveryId=${delivery_id}"
+		return 1
+	fi
+	for state_directory in "$INCOMING_DIRECTORY" "$PROCESSING_DIRECTORY" "$SUCCEEDED_DIRECTORY"; do
+		if [[ -e "${state_directory}/${delivery_id}.json" ]]; then
+			log "status=FAILED reason=retry_active_delivery deliveryId=${delivery_id}"
+			return 1
+		fi
+	done
+
+	timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+	history_path="${FAILED_DIRECTORY}/${delivery_id}.operator-retry-${timestamp}-$$.json"
+	if ! cp -- "$failed_path" "$history_path"; then
+		log "status=FAILED reason=retry_history_copy deliveryId=${delivery_id}"
+		return 1
+	fi
+	chmod 0640 "$history_path" || {
+		rm -f -- "$history_path"
+		log "status=FAILED reason=retry_history_permission deliveryId=${delivery_id}"
+		return 1
+	}
+	if ! move_without_overwrite "$failed_path" "$incoming_path"; then
+		rm -f -- "$history_path"
+		log "status=FAILED reason=retry_enqueue deliveryId=${delivery_id}"
+		return 1
+	fi
+
+	log "status=REQUEUED reason=operator_retry deliveryId=${delivery_id} history=$(basename -- "$history_path")"
 	return 0
 }
 
@@ -293,4 +393,27 @@ main() {
 	[[ "$failures" -eq 0 ]]
 }
 
-main "$@"
+dispatch() {
+	if [[ $# -eq 0 ]]; then
+		main
+		return
+	fi
+
+	case "$1" in
+		retry)
+			if [[ $# -ne 2 ]]; then
+				printf 'usage: %s retry <failed-delivery-id>\n' "$0" >&2
+				return 2
+			fi
+			retry_failed_job "$2"
+			;;
+		*)
+			printf 'usage: %s [retry <failed-delivery-id>]\n' "$0" >&2
+			return 2
+			;;
+	esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	dispatch "$@"
+fi

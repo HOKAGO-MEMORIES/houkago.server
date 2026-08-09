@@ -40,3 +40,11 @@ dependencies {
 tasks.withType<Test> {
 	useJUnitPlatform()
 }
+
+val testContentSyncWorker by tasks.registering(Exec::class) {
+	commandLine("bash", "ops/content-sync/test-houkago-content-sync-worker.sh")
+}
+
+tasks.named("test") {
+	dependsOn(testContentSyncWorker)
+}
