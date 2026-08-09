@@ -30,3 +30,11 @@ houkago:
     enabled: ${HOUKAGO_RESYNC_ENABLED:false}
     posts-root: ${HOUKAGO_RESYNC_POSTS_ROOT:}
     commit-hash: ${HOUKAGO_RESYNC_COMMIT_HASH:}
+  webhook:
+    github:
+      posts:
+        enabled: ${HOUKAGO_POSTS_WEBHOOK_ENABLED:false}
+        secret: ${HOUKAGO_POSTS_WEBHOOK_SECRET:}
+        repository-full-name: ${HOUKAGO_POSTS_WEBHOOK_REPOSITORY_FULL_NAME:}
+        ref: ${HOUKAGO_POSTS_WEBHOOK_REF:refs/heads/main}
+        spool-root: ${HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT:}
