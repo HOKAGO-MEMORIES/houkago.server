@@ -7,14 +7,25 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileAttribute;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class PostGitHubWebhookSpool {
+
+	private static final FileAttribute<Set<PosixFilePermission>> JOB_FILE_PERMISSIONS =
+			PosixFilePermissions.asFileAttribute(EnumSet.of(
+					PosixFilePermission.OWNER_READ,
+					PosixFilePermission.OWNER_WRITE,
+					PosixFilePermission.GROUP_READ));
 
 	private final ObjectMapper objectMapper;
 	private final Clock clock;
@@ -59,9 +70,10 @@ public class PostGitHubWebhookSpool {
 					Instant.now(clock).toString());
 			byte[] jobJson = serialize(job);
 			temporaryPath = Files.createTempFile(
-					temporaryDirectory,
-					"." + request.deliveryId() + "-",
-					".tmp");
+				temporaryDirectory,
+				"." + request.deliveryId() + "-",
+				".tmp",
+				JOB_FILE_PERMISSIONS);
 			Files.write(temporaryPath, jobJson, StandardOpenOption.TRUNCATE_EXISTING);
 
 			try {

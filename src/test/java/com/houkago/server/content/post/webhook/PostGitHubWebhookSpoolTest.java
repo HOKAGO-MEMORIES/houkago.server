@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -97,6 +98,17 @@ class PostGitHubWebhookSpoolTest {
 		try (Stream<Path> temporaryFiles = Files.list(spoolRoot.resolve(".tmp"))) {
 			assertThat(temporaryFiles).isEmpty();
 		}
+	}
+
+	@Test
+	void publishedJobIsReadableByTheWorkerGroupWithoutGroupWritePermission() throws Exception {
+		spool.publish(request());
+
+		Path jobPath = spoolRoot.resolve("incoming").resolve(DELIVERY_ID + ".json");
+		assertThat(Files.getPosixFilePermissions(jobPath)).containsExactlyInAnyOrder(
+				PosixFilePermission.OWNER_READ,
+				PosixFilePermission.OWNER_WRITE,
+				PosixFilePermission.GROUP_READ);
 	}
 
 	private PostGitHubWebhookRequest request() {
