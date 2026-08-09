@@ -1,0 +1,25 @@
+[Unit]
+Description=Houkago content sync queue worker
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+SupplementaryGroups=docker houkago-sync
+WorkingDirectory=/opt/houkago/server
+ExecStart=/usr/local/sbin/houkago-content-sync-worker
+TimeoutStartSec=20min
+Restart=no
+UMask=0007
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/opt/houkago/posts /opt/houkago/sync-jobs /run/docker.sock
+ReadOnlyPaths=/opt/houkago/server /opt/houkago/env
+
+[Install]
+WantedBy=multi-user.target

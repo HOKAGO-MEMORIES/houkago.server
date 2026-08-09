@@ -9,6 +9,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,6 +20,7 @@ public class PostGitHubWebhookSpool {
 	private final Clock clock;
 	private final Path temporaryDirectory;
 	private final Path incomingDirectory;
+	private final List<Path> jobStateDirectories;
 
 	public PostGitHubWebhookSpool(
 			ObjectMapper objectMapper,
@@ -33,6 +35,11 @@ public class PostGitHubWebhookSpool {
 		Path normalizedSpoolRoot = Path.of(spoolRoot).toAbsolutePath().normalize();
 		this.temporaryDirectory = normalizedSpoolRoot.resolve(".tmp");
 		this.incomingDirectory = normalizedSpoolRoot.resolve("incoming");
+		this.jobStateDirectories = List.of(
+				incomingDirectory,
+				normalizedSpoolRoot.resolve("processing"),
+				normalizedSpoolRoot.resolve("succeeded"),
+				normalizedSpoolRoot.resolve("failed"));
 	}
 
 	public synchronized PostGitHubWebhookResult publish(PostGitHubWebhookRequest request) {
@@ -42,7 +49,7 @@ public class PostGitHubWebhookSpool {
 		try {
 			Files.createDirectories(temporaryDirectory);
 			Files.createDirectories(incomingDirectory);
-			if (Files.exists(finalPath)) {
+			if (jobExists(request.deliveryId())) {
 				return result(PostGitHubWebhookResult.Status.DUPLICATE, request);
 			}
 
@@ -81,6 +88,13 @@ public class PostGitHubWebhookSpool {
 		finally {
 			deleteTemporaryFile(temporaryPath);
 		}
+	}
+
+	private boolean jobExists(String deliveryId) {
+		String jobFileName = deliveryId + ".json";
+		return jobStateDirectories.stream()
+				.map(directory -> directory.resolve(jobFileName))
+				.anyMatch(Files::exists);
 	}
 
 	private byte[] serialize(PostGitHubWebhookJob job) {

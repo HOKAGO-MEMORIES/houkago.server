@@ -15,7 +15,9 @@ FROM eclipse-temurin:21-jre-jammy
 
 WORKDIR /app
 
-RUN groupadd --system houkago && useradd --system --gid houkago houkago
+RUN groupadd --gid 2001 houkago \
+	&& useradd --uid 2001 --gid houkago --no-create-home --home-dir /nonexistent \
+		--shell /usr/sbin/nologin houkago
 
 COPY --from=build /workspace/build/libs/*.jar /app/houkago.server.jar
 

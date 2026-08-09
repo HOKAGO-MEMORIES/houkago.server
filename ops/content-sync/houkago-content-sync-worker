@@ -1,0 +1,296 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+readonly SPOOL_ROOT="${HOUKAGO_SYNC_SPOOL_ROOT:-/opt/houkago/sync-jobs}"
+readonly INCOMING_DIRECTORY="${SPOOL_ROOT}/incoming"
+readonly PROCESSING_DIRECTORY="${SPOOL_ROOT}/processing"
+readonly SUCCEEDED_DIRECTORY="${SPOOL_ROOT}/succeeded"
+readonly FAILED_DIRECTORY="${SPOOL_ROOT}/failed"
+readonly TEMPORARY_DIRECTORY="${SPOOL_ROOT}/.tmp"
+readonly LOCK_FILE="${SPOOL_ROOT}/worker.lock"
+readonly POSTS_ROOT="${HOUKAGO_POSTS_ROOT:-/opt/houkago/posts}"
+readonly SERVER_ROOT="${HOUKAGO_SERVER_ROOT:-/opt/houkago/server}"
+readonly SERVER_ENV="${HOUKAGO_SERVER_ENV:-/opt/houkago/env/server.env}"
+readonly COMPOSE_FILE="${HOUKAGO_COMPOSE_FILE:-${SERVER_ROOT}/compose.prod.yml}"
+readonly PUBLIC_API_BASE_URL="${HOUKAGO_PUBLIC_API_BASE_URL:-https://api.houkago.moe}"
+readonly PUBLIC_DETAIL_SLUG="${HOUKAGO_PUBLIC_DETAIL_SLUG:-boj-2342}"
+
+failures=0
+
+log() {
+	printf 'event=houkago_content_sync_worker %s\n' "$*"
+}
+
+move_without_overwrite() {
+	local source_path="$1"
+	local target_path="$2"
+
+	if [[ -e "$target_path" ]]; then
+		return 1
+	fi
+	mv -- "$source_path" "$target_path"
+}
+
+mark_failed() {
+	local source_path="$1"
+	local reason="$2"
+	local base_name target_path timestamp
+
+	base_name="$(basename -- "$source_path")"
+	target_path="${FAILED_DIRECTORY}/${base_name}"
+	if [[ -e "$target_path" ]]; then
+		timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+		target_path="${FAILED_DIRECTORY}/${base_name%.json}.duplicate-${timestamp}-$$.json"
+	fi
+
+	if [[ -e "$source_path" ]] && ! move_without_overwrite "$source_path" "$target_path"; then
+		log "status=FAILED reason=failed_state_move job=${base_name}"
+		return 1
+	fi
+	log "status=FAILED reason=${reason} job=${base_name}"
+	return 0
+}
+
+validate_job() {
+	local job_path="$1"
+
+	python3 - "$job_path" <<'PY'
+import datetime
+import json
+import pathlib
+import re
+import sys
+import uuid
+
+path = pathlib.Path(sys.argv[1])
+try:
+    with path.open("r", encoding="utf-8") as file:
+        job = json.load(file)
+except (OSError, UnicodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+if not isinstance(job, dict) or set(job) != {"deliveryId", "commitSha", "receivedAt"}:
+    raise SystemExit(1)
+
+delivery_id = job.get("deliveryId")
+commit_sha = job.get("commitSha")
+received_at = job.get("receivedAt")
+if not all(isinstance(value, str) for value in (delivery_id, commit_sha, received_at)):
+    raise SystemExit(1)
+
+try:
+    normalized_delivery_id = str(uuid.UUID(delivery_id))
+except ValueError:
+    raise SystemExit(1)
+if normalized_delivery_id != delivery_id or path.name != f"{delivery_id}.json":
+    raise SystemExit(1)
+
+if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit_sha) or set(commit_sha) == {"0"}:
+    raise SystemExit(1)
+
+try:
+    if not received_at.endswith("Z"):
+        raise ValueError
+    datetime.datetime.fromisoformat(received_at[:-1] + "+00:00")
+except ValueError:
+    raise SystemExit(1)
+
+print(delivery_id)
+print(commit_sha)
+PY
+}
+
+verify_public_api() {
+	local health_response list_status featured_status detail_status
+
+	health_response="$(curl -fsS --max-time 10 http://127.0.0.1:8080/actuator/health 2>/dev/null)" || return 1
+	printf '%s' "$health_response" | grep -q '"status":"UP"' || return 1
+
+	list_status="$(curl -o /dev/null -sS -w '%{http_code}' --max-time 15 \
+		"${PUBLIC_API_BASE_URL}/api/posts?page=0&size=1")" || return 1
+	featured_status="$(curl -o /dev/null -sS -w '%{http_code}' --max-time 15 \
+		"${PUBLIC_API_BASE_URL}/api/posts?featured=true&page=0&size=1")" || return 1
+	detail_status="$(curl -o /dev/null -sS -w '%{http_code}' --max-time 15 \
+		"${PUBLIC_API_BASE_URL}/api/posts/${PUBLIC_DETAIL_SLUG}")" || return 1
+
+	[[ "$list_status" == "200" && "$featured_status" == "200" && "$detail_status" == "200" ]]
+}
+
+run_one_shot_sync() {
+	local delivery_id="$1"
+	local checkout_head="$2"
+	local sync_log sync_status
+
+	sync_log="$(mktemp "${TEMPORARY_DIRECTORY}/sync-${delivery_id}.XXXXXX.log")" || return 1
+	(
+		cd "$SERVER_ROOT" || exit 1
+		HOUKAGO_RESYNC_COMMIT_HASH="$checkout_head" docker compose \
+			--env-file "$SERVER_ENV" \
+			-f "$COMPOSE_FILE" \
+			--profile sync \
+			run --rm sync
+	) 2>&1 | tee "$sync_log"
+	sync_status=${PIPESTATUS[0]}
+
+	if [[ "$sync_status" -ne 0 ]] \
+			|| ! grep -Fq "status=SUCCESS commitHash=${checkout_head}" "$sync_log" \
+			|| ! grep -Eq 'CREATED=[0-9]+ UPDATED=[0-9]+ TOUCHED=[0-9]+ DELETED=[0-9]+' "$sync_log"; then
+		rm -f -- "$sync_log"
+		return 1
+	fi
+
+	rm -f -- "$sync_log"
+	return 0
+}
+
+process_job() {
+	local incoming_path="$1"
+	local validation_output delivery_id commit_sha base_name processing_path
+	local git_status current_branch origin_main current_head checkout_head
+
+	base_name="$(basename -- "$incoming_path")"
+	if [[ ! -f "$incoming_path" || -L "$incoming_path" ]]; then
+		mark_failed "$incoming_path" "invalid_job_file" || true
+		return 1
+	fi
+	if ! validation_output="$(validate_job "$incoming_path" 2>/dev/null)"; then
+		mark_failed "$incoming_path" "invalid_job" || true
+		return 1
+	fi
+	delivery_id="$(printf '%s\n' "$validation_output" | sed -n '1p')"
+	commit_sha="$(printf '%s\n' "$validation_output" | sed -n '2p')"
+
+	for state_directory in "$PROCESSING_DIRECTORY" "$SUCCEEDED_DIRECTORY" "$FAILED_DIRECTORY"; do
+		if [[ -e "${state_directory}/${base_name}" ]]; then
+			mark_failed "$incoming_path" "duplicate_delivery" || true
+			return 1
+		fi
+	done
+
+	processing_path="${PROCESSING_DIRECTORY}/${base_name}"
+	if ! move_without_overwrite "$incoming_path" "$processing_path"; then
+		mark_failed "$incoming_path" "processing_move" || true
+		return 1
+	fi
+
+	if ! git_status="$(git -C "$POSTS_ROOT" status --porcelain --untracked-files=normal)"; then
+		mark_failed "$processing_path" "git_status" || true
+		return 1
+	fi
+	if [[ -n "$git_status" ]]; then
+		mark_failed "$processing_path" "dirty_checkout" || true
+		return 1
+	fi
+	if ! current_branch="$(git -C "$POSTS_ROOT" branch --show-current)"; then
+		mark_failed "$processing_path" "git_branch" || true
+		return 1
+	fi
+	if [[ "$current_branch" != "main" ]]; then
+		mark_failed "$processing_path" "unexpected_branch" || true
+		return 1
+	fi
+	if ! git -C "$POSTS_ROOT" fetch --quiet origin main; then
+		mark_failed "$processing_path" "git_fetch" || true
+		return 1
+	fi
+	if ! git_status="$(git -C "$POSTS_ROOT" status --porcelain --untracked-files=normal)"; then
+		mark_failed "$processing_path" "git_status_after_fetch" || true
+		return 1
+	fi
+	if [[ -n "$git_status" ]]; then
+		mark_failed "$processing_path" "dirty_checkout_after_fetch" || true
+		return 1
+	fi
+	if ! git -C "$POSTS_ROOT" cat-file -e "${commit_sha}^{commit}" 2>/dev/null; then
+		mark_failed "$processing_path" "unknown_commit" || true
+		return 1
+	fi
+	origin_main="$(git -C "$POSTS_ROOT" rev-parse refs/remotes/origin/main)" || {
+		mark_failed "$processing_path" "missing_origin_main" || true
+		return 1
+	}
+	if ! git -C "$POSTS_ROOT" merge-base --is-ancestor "$commit_sha" "$origin_main"; then
+		mark_failed "$processing_path" "job_not_on_origin_main" || true
+		return 1
+	fi
+	current_head="$(git -C "$POSTS_ROOT" rev-parse HEAD)" || {
+		mark_failed "$processing_path" "missing_checkout_head" || true
+		return 1
+	}
+	if ! git -C "$POSTS_ROOT" merge-base --is-ancestor "$current_head" "$origin_main"; then
+		mark_failed "$processing_path" "non_fast_forward" || true
+		return 1
+	fi
+	if ! git -C "$POSTS_ROOT" merge --ff-only --quiet "$origin_main"; then
+		mark_failed "$processing_path" "git_merge" || true
+		return 1
+	fi
+	checkout_head="$(git -C "$POSTS_ROOT" rev-parse HEAD)" || {
+		mark_failed "$processing_path" "checkout_verification" || true
+		return 1
+	}
+	if [[ "$checkout_head" != "$origin_main" ]]; then
+		mark_failed "$processing_path" "checkout_not_at_origin_main" || true
+		return 1
+	fi
+	if ! git -C "$POSTS_ROOT" merge-base --is-ancestor "$commit_sha" "$checkout_head"; then
+		mark_failed "$processing_path" "checkout_missing_job_commit" || true
+		return 1
+	fi
+
+	if ! run_one_shot_sync "$delivery_id" "$checkout_head"; then
+		mark_failed "$processing_path" "one_shot_sync" || true
+		return 1
+	fi
+	if ! verify_public_api; then
+		mark_failed "$processing_path" "public_api_smoke" || true
+		return 1
+	fi
+	if ! move_without_overwrite "$processing_path" "${SUCCEEDED_DIRECTORY}/${base_name}"; then
+		mark_failed "$processing_path" "succeeded_move" || true
+		return 1
+	fi
+
+	log "status=SUCCESS deliveryId=${delivery_id} commitSha=${checkout_head}"
+	return 0
+}
+
+main() {
+	local jobs job_path
+
+	for directory in "$INCOMING_DIRECTORY" "$PROCESSING_DIRECTORY" "$SUCCEEDED_DIRECTORY" \
+			"$FAILED_DIRECTORY" "$TEMPORARY_DIRECTORY"; do
+		[[ -d "$directory" ]] || {
+			log "status=FAILED reason=missing_directory"
+			return 1
+		}
+	done
+
+	exec 9>"$LOCK_FILE" || {
+		log "status=FAILED reason=lock_open"
+		return 1
+	}
+	if ! flock -n 9; then
+		log "status=SKIPPED reason=lock_busy"
+		return 0
+	fi
+
+	while true; do
+		shopt -s nullglob
+		jobs=("${INCOMING_DIRECTORY}"/*.json)
+		shopt -u nullglob
+		[[ ${#jobs[@]} -gt 0 ]] || break
+
+		for job_path in "${jobs[@]}"; do
+			if ! process_job "$job_path"; then
+				failures=$((failures + 1))
+			fi
+		done
+	done
+
+	log "status=COMPLETE failures=${failures}"
+	[[ "$failures" -eq 0 ]]
+}
+
+main "$@"

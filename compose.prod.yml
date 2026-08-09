@@ -46,6 +46,11 @@ services:
       HOUKAGO_RESYNC_ENABLED: ${HOUKAGO_RESYNC_ENABLED:-false}
       HOUKAGO_RESYNC_POSTS_ROOT: ${HOUKAGO_RESYNC_POSTS_ROOT:-/workspace/houkago.posts}
       HOUKAGO_RESYNC_COMMIT_HASH: ${HOUKAGO_RESYNC_COMMIT_HASH:-}
+      HOUKAGO_POSTS_WEBHOOK_ENABLED: ${HOUKAGO_POSTS_WEBHOOK_ENABLED:-false}
+      HOUKAGO_POSTS_WEBHOOK_SECRET: ${HOUKAGO_POSTS_WEBHOOK_SECRET:-}
+      HOUKAGO_POSTS_WEBHOOK_REPOSITORY_FULL_NAME: ${HOUKAGO_POSTS_WEBHOOK_REPOSITORY_FULL_NAME:-}
+      HOUKAGO_POSTS_WEBHOOK_REF: ${HOUKAGO_POSTS_WEBHOOK_REF:-refs/heads/main}
+      HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT: ${HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT:-/workspace/sync-jobs}
       SERVER_PORT: 8080
       TZ: Asia/Seoul
     ports:
@@ -54,6 +59,24 @@ services:
       - type: bind
         source: /opt/houkago/posts
         target: ${HOUKAGO_RESYNC_POSTS_ROOT:-/workspace/houkago.posts}
+        read_only: true
+      - type: bind
+        source: /opt/houkago/sync-jobs/.tmp
+        target: ${HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT:-/workspace/sync-jobs}/.tmp
+      - type: bind
+        source: /opt/houkago/sync-jobs/incoming
+        target: ${HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT:-/workspace/sync-jobs}/incoming
+      - type: bind
+        source: /opt/houkago/sync-jobs/processing
+        target: ${HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT:-/workspace/sync-jobs}/processing
+        read_only: true
+      - type: bind
+        source: /opt/houkago/sync-jobs/succeeded
+        target: ${HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT:-/workspace/sync-jobs}/succeeded
+        read_only: true
+      - type: bind
+        source: /opt/houkago/sync-jobs/failed
+        target: ${HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT:-/workspace/sync-jobs}/failed
         read_only: true
     networks:
       - houkago-internal

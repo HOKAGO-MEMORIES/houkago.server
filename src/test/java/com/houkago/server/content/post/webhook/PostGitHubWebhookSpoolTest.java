@@ -71,6 +71,23 @@ class PostGitHubWebhookSpoolTest {
 	}
 
 	@Test
+	void deliveryInAnyWorkerStateIsDuplicate() throws Exception {
+		for (String state : List.of("processing", "succeeded", "failed")) {
+			Path stateDirectory = spoolRoot.resolve(state);
+			Files.createDirectories(stateDirectory);
+			Path existingJob = stateDirectory.resolve(DELIVERY_ID + ".json");
+			Files.writeString(existingJob, "existing " + state);
+
+			PostGitHubWebhookResult result = spool.publish(request());
+
+			assertThat(result.status()).isEqualTo(PostGitHubWebhookResult.Status.DUPLICATE);
+			assertThat(Files.readString(existingJob)).isEqualTo("existing " + state);
+			assertThat(spoolRoot.resolve("incoming").resolve(DELIVERY_ID + ".json")).doesNotExist();
+			Files.delete(existingJob);
+		}
+	}
+
+	@Test
 	void successfulPublishLeavesNoTemporaryFile() throws Exception {
 		spool.publish(request());
 
