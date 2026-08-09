@@ -122,7 +122,15 @@ verify_checkout_readable() {
 					exit 1
 				fi
 
-				unreadable_path="$(find "$root" -type f -name index.md ! -readable -print -quit)" || {
+				unreadable_path="$(find "$root" \
+					-type d \( \
+						-name ".*" -o \
+						-name node_modules -o \
+						-name dist -o \
+						-name build -o \
+						-name assets \
+					\) -prune -o \
+					-type f -name index.md ! -readable -print -quit)" || {
 					printf "HOUKAGO_UNREADABLE_PATH=.\n"
 					exit 1
 				}

@@ -130,6 +130,10 @@ EOF
 		|| fail "readability guard did not preserve the failing relative path"
 	grep -Fq -- '--no-deps -T --entrypoint /bin/sh sync' "$docker_arguments" \
 		|| fail "readability guard did not use the sync service contract"
+	grep -Fq -- '-name ".*"' "$docker_arguments" \
+		|| fail "readability guard did not prune hidden directories"
+	grep -Fq -- '-name assets' "$docker_arguments" \
+		|| fail "readability guard did not prune post asset directories"
 }
 
 reset_spool_files() {
