@@ -6,6 +6,7 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
+EnvironmentFile=-/opt/houkago/env/content-sync-worker.env
 User=ubuntu
 Group=ubuntu
 SupplementaryGroups=docker houkago-sync
