@@ -280,9 +280,11 @@ test_revalidation_case() (
 
 test_revalidation_request_contract() (
 	local arguments_file="${TEMPORARY_ROOT}/revalidation-curl-arguments"
+	local headers_file="${TEMPORARY_ROOT}/revalidation-curl-headers"
 	local output
 
 	curl() {
+		cat > "$headers_file"
 		printf '%s\n' "$@" > "$arguments_file"
 		printf '200'
 	}
@@ -293,8 +295,12 @@ test_revalidation_request_contract() (
 	grep -Fxq -- '=https' "$arguments_file" || fail "revalidation must require HTTPS"
 	grep -Fxq -- '--connect-timeout' "$arguments_file" || fail "missing connection timeout"
 	grep -Fxq -- '--max-time' "$arguments_file" || fail "missing overall timeout"
-	grep -Fxq -- 'Authorization: Bearer synthetic-worker-secret' "$arguments_file" \
-		|| fail "missing Bearer authorization header"
+	grep -Fxq -- '--header' "$arguments_file" || fail "missing header option"
+	grep -Fxq -- '@-' "$arguments_file" || fail "Bearer header must be read from stdin"
+	! grep -Fq -- "$HOUKAGO_REVALIDATE_SECRET" "$arguments_file" \
+		|| fail "revalidation secret must not appear in process arguments"
+	grep -Fxq -- 'Authorization: Bearer synthetic-worker-secret' "$headers_file" \
+		|| fail "missing Bearer authorization header on stdin"
 )
 
 test_revalidation_failure_is_non_fatal() (

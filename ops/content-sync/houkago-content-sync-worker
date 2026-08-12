@@ -175,7 +175,7 @@ verify_public_api() {
 }
 
 perform_frontend_revalidation_request() {
-	curl \
+	printf 'Authorization: Bearer %s\n' "$REVALIDATE_SECRET" | curl \
 		--silent \
 		--show-error \
 		--output /dev/null \
@@ -184,7 +184,7 @@ perform_frontend_revalidation_request() {
 		--connect-timeout "$REVALIDATION_CONNECT_TIMEOUT_SECONDS" \
 		--max-time "$REVALIDATION_MAX_TIME_SECONDS" \
 		--request POST \
-		--header "Authorization: Bearer ${REVALIDATE_SECRET}" \
+		--header @- \
 		"$REVALIDATE_URL"
 }
 
