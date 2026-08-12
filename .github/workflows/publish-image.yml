@@ -1,0 +1,145 @@
+name: Backend Image Publish
+
+on:
+  workflow_run:
+    workflows:
+      - Backend CI
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: backend-image-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish ARM64 Image
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      IMAGE_NAME: ghcr.io/hokago-memories/houkago.server
+      IMAGE_SOURCE: https://github.com/HOKAGO-MEMORIES/houkago.server
+      IMAGE_TAG: sha-${{ github.event.workflow_run.head_sha }}
+      TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
+      TARGET_PLATFORM: linux/arm64
+
+    steps:
+      - name: Check out verified revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.TARGET_SHA }}
+
+      - name: Verify target revision
+        run: |
+          set -euo pipefail
+          checkout_sha="$(git rev-parse HEAD)"
+          test "$checkout_sha" = "$TARGET_SHA"
+          printf 'Target revision: %s\n' "$TARGET_SHA"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check immutable tag
+        id: existing
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE_NAME}:${IMAGE_TAG}"
+
+          set +e
+          inspect_output="$(docker buildx imagetools inspect "$image_ref" 2>&1)"
+          inspect_status=$?
+          set -e
+
+          if [ "$inspect_status" -eq 0 ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            printf 'Image tag already exists; the existing artifact will be verified.\n'
+          elif printf '%s' "$inspect_output" | grep -Eqi \
+            'manifest unknown|name unknown|not found'; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            printf 'Image tag does not exist and will be published.\n'
+          else
+            printf 'Unable to determine whether the image tag exists.\n' >&2
+            exit 1
+          fi
+
+      - name: Build and push ARM64 image
+        if: steps.existing.outputs.exists == 'false'
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ env.TARGET_PLATFORM }}
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          labels: |
+            org.opencontainers.image.revision=${{ env.TARGET_SHA }}
+            org.opencontainers.image.source=${{ env.IMAGE_SOURCE }}
+          cache-from: type=gha,scope=houkago-server-arm64
+          cache-to: type=gha,mode=max,scope=houkago-server-arm64
+
+      - name: Verify published image
+        id: verify
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE_NAME}:${IMAGE_TAG}"
+          docker pull "$image_ref"
+
+          digest_ref="$(docker image inspect \
+            --format '{{index .RepoDigests 0}}' "$image_ref")"
+          digest="${digest_ref#*@}"
+          architecture="$(docker image inspect \
+            --format '{{.Architecture}}' "$image_ref")"
+          os="$(docker image inspect --format '{{.Os}}' "$image_ref")"
+          revision="$(docker image inspect \
+            --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+            "$image_ref")"
+          source="$(docker image inspect \
+            --format '{{index .Config.Labels "org.opencontainers.image.source"}}' \
+            "$image_ref")"
+
+          test "$digest" != "$digest_ref"
+          printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          test "$architecture" = "arm64"
+          test "$os" = "linux"
+          test "$revision" = "$TARGET_SHA"
+          test "$source" = "$IMAGE_SOURCE"
+
+          if [ "${{ steps.existing.outputs.exists }}" = "false" ]; then
+            test "$digest" = "${{ steps.build.outputs.digest }}"
+          fi
+
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "image_ref=${IMAGE_NAME}@${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Write artifact summary
+        env:
+          VERIFIED_DIGEST: ${{ steps.verify.outputs.digest }}
+          VERIFIED_IMAGE_REF: ${{ steps.verify.outputs.image_ref }}
+          EXISTING_TAG: ${{ steps.existing.outputs.exists }}
+        run: |
+          {
+            printf "## Backend ARM64 image\n\n"
+            printf -- "- Revision: \`%s\`\n" "$TARGET_SHA"
+            printf -- "- Image: \`%s:%s\`\n" "$IMAGE_NAME" "$IMAGE_TAG"
+            printf -- "- Digest: \`%s\`\n" "$VERIFIED_DIGEST"
+            printf -- "- Deployment reference: \`%s\`\n" "$VERIFIED_IMAGE_REF"
+            printf -- "- Platform: \`%s\`\n" "$TARGET_PLATFORM"
+            printf -- "- Existing immutable tag: \`%s\`\n" "$EXISTING_TAG"
+          } >> "$GITHUB_STEP_SUMMARY"
