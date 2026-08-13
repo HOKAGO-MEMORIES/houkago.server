@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for Houkago backend deployment jobs
+
+[Path]
+PathExistsGlob=/opt/houkago/deploy-jobs/incoming/*.json
+Unit=houkago-backend-deploy.service
+
+[Install]
+WantedBy=multi-user.target

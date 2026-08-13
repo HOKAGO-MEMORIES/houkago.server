@@ -49,8 +49,40 @@ jobs:
 
       - name: Validate production Compose
         run: |
-          docker compose --profile sync -f compose.prod.yml config --quiet
-          docker compose --profile sync -f compose.prod.yml config --services
+          server_env="$RUNNER_TEMP/houkago-server.env"
+          release_env="$RUNNER_TEMP/houkago-backend-release.env"
+          printf '%s\n' \
+            "MYSQL_DATABASE=$MYSQL_DATABASE" \
+            "MYSQL_USER=$MYSQL_USER" \
+            "MYSQL_PASSWORD=$MYSQL_PASSWORD" \
+            "MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD" \
+            > "$server_env"
+          printf '%s\n' \
+            "HOUKAGO_SERVER_IMAGE=ghcr.io/example/houkago.server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+            "HOUKAGO_SERVER_REVISION=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+            "HOUKAGO_SERVER_SCHEMA_COMPATIBILITY=unchanged" \
+            > "$release_env"
+
+          env -u HOUKAGO_SERVER_IMAGE docker compose \
+            --env-file "$server_env" \
+            --env-file "$release_env" \
+            --profile sync \
+            -f compose.prod.yml \
+            config --quiet
+          env -u HOUKAGO_SERVER_IMAGE docker compose \
+            --env-file "$server_env" \
+            --env-file "$release_env" \
+            --profile sync \
+            -f compose.prod.yml \
+            config --format json | python3 -c '
+          import json
+          import sys
+
+          expected = "ghcr.io/example/houkago.server@sha256:" + "a" * 64
+          services = json.load(sys.stdin)["services"]
+          if services["app"]["image"] != expected or services["sync"]["image"] != expected:
+              raise SystemExit("app and sync must resolve to the same immutable image")
+          '
 
       - name: Build production Docker image
         run: docker build --tag houkago-server:ci .

@@ -15,7 +15,8 @@ That legacy setup is not the current MVP baseline.
 - The MVP supports manual full resync from a local `houkago.posts` checkout.
 - The implementation baseline is Spring Boot 3.x, Java 21, Gradle, MySQL, Flyway, and Actuator.
 - Production-like runtime will use Docker Compose, Nginx, the Spring Boot app, and MySQL.
-- Production deployment automation is not decided yet.
+- Production releases use immutable GHCR ARM64 image digests; the deploy trigger remains a separate
+  rollout phase.
 - `commit_hash` stores the `houkago.posts` Git commit used for a sync.
 - `checksum` tracks metadata plus `raw_body` changes during full resync.
 - `source_hash` is not part of the read model.
@@ -76,6 +77,7 @@ normal `up` command:
 ```bash
 docker compose \
   --env-file /opt/houkago/env/server.env \
+  --env-file /opt/houkago/env/backend-release.env \
   -f compose.prod.yml \
   --profile sync \
   run --rm sync
@@ -167,6 +169,8 @@ Prerequisites on the OCI host:
 - `/opt/houkago/server` contains this repository.
 - `/opt/houkago/posts` contains a read-only checkout source for `houkago.posts`.
 - `/opt/houkago/env/server.env` exists only on the server and is not committed.
+- `/opt/houkago/env/backend-release.env` identifies the current immutable Backend release and is
+  root-owned outside the repository.
 
 The production smoke compose file is:
 
@@ -181,6 +185,10 @@ cp .env.prod.example /opt/houkago/env/server.env
 chmod 600 /opt/houkago/env/server.env
 ```
 
+Create the secret-free release file from `ops/backend-deploy/backend-release.env.example` and set
+the exact published digest and matching full Git revision. `app` and `sync` resolve through this
+same file. Mutable tags are not accepted by the deploy worker.
+
 Before manual resync, check the posts checkout status and commit hash:
 
 ```bash
@@ -193,7 +201,11 @@ Use that commit hash as `HOUKAGO_RESYNC_COMMIT_HASH`.
 Run the backend smoke stack from `/opt/houkago/server`:
 
 ```bash
-docker compose --env-file /opt/houkago/env/server.env -f compose.prod.yml up -d --build
+env -u HOUKAGO_SERVER_IMAGE docker compose \
+  --env-file /opt/houkago/env/server.env \
+  --env-file /opt/houkago/env/backend-release.env \
+  -f compose.prod.yml \
+  up -d
 ```
 
 Security boundary for this smoke stack:
@@ -209,8 +221,16 @@ directly from the public internet; host Nginx is the public HTTP ingress on port
 Useful smoke checks:
 
 ```bash
-docker compose --env-file /opt/houkago/env/server.env -f compose.prod.yml ps
-docker compose --env-file /opt/houkago/env/server.env -f compose.prod.yml logs --tail=100 app
+env -u HOUKAGO_SERVER_IMAGE docker compose \
+  --env-file /opt/houkago/env/server.env \
+  --env-file /opt/houkago/env/backend-release.env \
+  -f compose.prod.yml \
+  ps
+env -u HOUKAGO_SERVER_IMAGE docker compose \
+  --env-file /opt/houkago/env/server.env \
+  --env-file /opt/houkago/env/backend-release.env \
+  -f compose.prod.yml \
+  logs --tail=100 app
 curl -sS http://127.0.0.1:8080/actuator/health
 curl -sS "http://127.0.0.1:8080/api/posts?size=3"
 sudo ss -tulpn
@@ -278,9 +298,40 @@ manual service restarts. Spring Boot remains loopback-only and MySQL remains unp
 The reboot-required package was `apparmor`; the kernel remained `6.17.0-1018-oracle` before and
 after reboot. HSTS, frontend/CORS integration, and remaining security updates are deferred.
 
-On the OCI ARM server, the first Docker build can take a while because Gradle dependencies are
-downloaded inside the Docker build. If that becomes too slow, consider a later Host-build plus thin
-runtime image workflow instead of changing this smoke baseline immediately.
+The OCI host does not build the Backend image. It pulls the exact GHCR digest recorded in the
+release file.
+
+## OCI Backend Deploy Worker
+
+`POST /internal/deployments/backend` is the authenticated deploy request boundary. It is disabled
+by default. When enabled, it accepts a delivery UUID, full Git revision, and allowlisted immutable
+GHCR digest, then atomically publishes a minimal job under `/opt/houkago/deploy-jobs`. The job also
+records `receivedAt` and a short `notBefore` boundary so the host worker does not begin replacing the
+request-serving app immediately after publication.
+
+The root-owned host worker is installed separately as
+`/usr/local/sbin/houkago-backend-deploy-worker`. It acquires the deploy-domain lock and then the
+shared `/opt/houkago/locks/backend-maintenance.lock`, verifies the ARM64 image labels and digest,
+checks the Flyway migration gate, and recreates only `app`. Content sync uses its own domain lock
+followed by the same maintenance lock. Both lock waits are bounded.
+
+Worker operations:
+
+```bash
+sudo houkago-backend-deploy-worker status
+sudo houkago-backend-deploy-worker retry <delivery-id>
+sudo houkago-backend-deploy-worker rollback
+sudo houkago-backend-deploy-worker dry-run <job-file>
+```
+
+`rollback` restores the previous successful application image only. It never rolls back database
+schema. Any revision containing Flyway migration files is fail-closed for manual compatibility
+review. The single-app recreate path uses graceful Spring shutdown and a 30-second Compose stop
+grace, but a short 502 window remains possible; this is not a zero-downtime deployment design.
+
+The systemd path/service and worker sources live in `ops/systemd` and `ops/backend-deploy`. The
+GitHub image-publish workflow does not call this endpoint yet; that Production trigger and complete
+deploy/rollback E2E belong to the next rollout phase.
 
 ## Verification
 
@@ -297,8 +348,8 @@ The repository integration test requires Docker because it starts a MySQL Testco
 ## Not Implemented Yet
 
 - automatic Git commit hash lookup
-- deployment automation
-- webhook, incremental sync, and frontend revalidation
+- GitHub image publish to Production deploy-trigger connection
+- blue/green or multi-app zero-downtime deployment
 
 ## Reference Documentation
 

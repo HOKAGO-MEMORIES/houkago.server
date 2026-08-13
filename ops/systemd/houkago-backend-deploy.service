@@ -1,0 +1,25 @@
+[Unit]
+Description=Houkago backend deployment queue worker
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/opt/houkago/env/backend-deploy-worker.env
+User=root
+Group=root
+WorkingDirectory=/opt/houkago/server
+ExecStart=/usr/local/sbin/houkago-backend-deploy-worker
+TimeoutStartSec=20min
+Restart=no
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/opt/houkago/deploy-jobs /opt/houkago/deploy-state /opt/houkago/env/backend-release.env /opt/houkago/locks /run/docker.sock
+ReadOnlyPaths=/opt/houkago/server /opt/houkago/env/server.env /opt/houkago/env/backend-deploy-worker.env
+
+[Install]
+WantedBy=multi-user.target

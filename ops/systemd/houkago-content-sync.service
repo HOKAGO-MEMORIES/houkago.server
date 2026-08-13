@@ -19,7 +19,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict
-ReadWritePaths=/opt/houkago/posts /opt/houkago/sync-jobs /run/docker.sock
+ReadWritePaths=/opt/houkago/posts /opt/houkago/sync-jobs /opt/houkago/locks /run/docker.sock
 ReadOnlyPaths=/opt/houkago/server /opt/houkago/env
 
 [Install]

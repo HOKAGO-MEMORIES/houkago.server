@@ -1,8 +1,5 @@
 x-houkago-server-image: &houkago-server-image
-  image: houkago-server:local
-  build:
-    context: .
-    dockerfile: Dockerfile
+  image: ${HOUKAGO_SERVER_IMAGE:?Set HOUKAGO_SERVER_IMAGE in backend-release.env}
 
 services:
   mysql:
@@ -51,6 +48,11 @@ services:
       HOUKAGO_POSTS_WEBHOOK_REPOSITORY_FULL_NAME: ${HOUKAGO_POSTS_WEBHOOK_REPOSITORY_FULL_NAME:-}
       HOUKAGO_POSTS_WEBHOOK_REF: ${HOUKAGO_POSTS_WEBHOOK_REF:-refs/heads/main}
       HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT: ${HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT:-/workspace/sync-jobs}
+      HOUKAGO_DEPLOY_WEBHOOK_ENABLED: ${HOUKAGO_DEPLOY_WEBHOOK_ENABLED:-false}
+      HOUKAGO_DEPLOY_WEBHOOK_SECRET: ${HOUKAGO_DEPLOY_WEBHOOK_SECRET:-}
+      HOUKAGO_DEPLOY_IMAGE_REPOSITORY: ${HOUKAGO_DEPLOY_IMAGE_REPOSITORY:-ghcr.io/hokago-memories/houkago.server}
+      HOUKAGO_DEPLOY_SPOOL_ROOT: ${HOUKAGO_DEPLOY_SPOOL_ROOT:-/workspace/deploy-jobs}
+      HOUKAGO_DEPLOY_WORKER_GRACE_PERIOD: ${HOUKAGO_DEPLOY_WORKER_GRACE_PERIOD:-5s}
       SERVER_PORT: 8080
       TZ: Asia/Seoul
     ports:
@@ -75,9 +77,27 @@ services:
         source: /opt/houkago/sync-jobs/failed
         target: ${HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT:-/workspace/sync-jobs}/failed
         read_only: true
+      - type: bind
+        source: /opt/houkago/deploy-jobs
+        target: ${HOUKAGO_DEPLOY_SPOOL_ROOT:-/workspace/deploy-jobs}
+      - type: bind
+        source: /opt/houkago/deploy-jobs/processing
+        target: ${HOUKAGO_DEPLOY_SPOOL_ROOT:-/workspace/deploy-jobs}/processing
+        read_only: true
+      - type: bind
+        source: /opt/houkago/deploy-jobs/succeeded
+        target: ${HOUKAGO_DEPLOY_SPOOL_ROOT:-/workspace/deploy-jobs}/succeeded
+        read_only: true
+      - type: bind
+        source: /opt/houkago/deploy-jobs/failed
+        target: ${HOUKAGO_DEPLOY_SPOOL_ROOT:-/workspace/deploy-jobs}/failed
+        read_only: true
+    group_add:
+      - ${HOUKAGO_DEPLOY_GID:-2002}
     networks:
       - houkago-internal
     restart: unless-stopped
+    stop_grace_period: 30s
 
   sync:
     <<: *houkago-server-image

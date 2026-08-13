@@ -20,7 +20,10 @@ readonly LOCK_FILE="${SPOOL_ROOT}/worker.lock"
 readonly POSTS_ROOT="${HOUKAGO_POSTS_ROOT:-/opt/houkago/posts}"
 readonly SERVER_ROOT="${HOUKAGO_SERVER_ROOT:-/opt/houkago/server}"
 readonly SERVER_ENV="${HOUKAGO_SERVER_ENV:-/opt/houkago/env/server.env}"
+readonly RELEASE_ENV="${HOUKAGO_RELEASE_ENV:-/opt/houkago/env/backend-release.env}"
 readonly COMPOSE_FILE="${HOUKAGO_COMPOSE_FILE:-${SERVER_ROOT}/compose.prod.yml}"
+readonly MAINTENANCE_LOCK_FILE="${HOUKAGO_MAINTENANCE_LOCK_FILE:-/opt/houkago/locks/backend-maintenance.lock}"
+readonly MAINTENANCE_LOCK_TIMEOUT_SECONDS="${HOUKAGO_MAINTENANCE_LOCK_TIMEOUT_SECONDS:-60}"
 readonly PUBLIC_API_BASE_URL="${HOUKAGO_PUBLIC_API_BASE_URL:-https://api.houkago.moe}"
 readonly PUBLIC_DETAIL_SLUG="${HOUKAGO_PUBLIC_DETAIL_SLUG:-boj-2342}"
 readonly REVALIDATE_URL="${HOUKAGO_REVALIDATE_URL:-}"
@@ -33,6 +36,14 @@ failures=0
 
 log() {
 	printf 'event=houkago_content_sync_worker %s\n' "$*"
+}
+
+run_compose() {
+	env -u HOUKAGO_SERVER_IMAGE docker compose \
+		--env-file "$SERVER_ENV" \
+		--env-file "$RELEASE_ENV" \
+		-f "$COMPOSE_FILE" \
+		"$@"
 }
 
 run_checkout_git() {
@@ -124,9 +135,7 @@ PY
 verify_checkout_readable() {
 	(
 		cd "$SERVER_ROOT" || exit 1
-		docker compose \
-			--env-file "$SERVER_ENV" \
-			-f "$COMPOSE_FILE" \
+		run_compose \
 			--profile sync \
 			run --rm --no-deps -T --entrypoint /bin/sh sync -eu -c '
 				root="${HOUKAGO_RESYNC_POSTS_ROOT:?}"
@@ -247,9 +256,7 @@ run_one_shot_sync() {
 	sync_log="$(mktemp "${TEMPORARY_DIRECTORY}/sync-${delivery_id}.XXXXXX.log")" || return 1
 	(
 		cd "$SERVER_ROOT" || exit 1
-		HOUKAGO_RESYNC_COMMIT_HASH="$checkout_head" docker compose \
-			--env-file "$SERVER_ENV" \
-			-f "$COMPOSE_FILE" \
+		HOUKAGO_RESYNC_COMMIT_HASH="$checkout_head" run_compose \
 			--profile sync \
 			run --rm sync
 	) 2>&1 | tee "$sync_log"
@@ -461,7 +468,15 @@ main() {
 		return 1
 	}
 	if ! flock -n 9; then
-		log "status=SKIPPED reason=lock_busy"
+		log "status=QUEUED reason=content_lock_busy"
+		return 0
+	fi
+	exec 8>"$MAINTENANCE_LOCK_FILE" || {
+		log "status=FAILED reason=maintenance_lock_open"
+		return 1
+	}
+	if ! flock -w "$MAINTENANCE_LOCK_TIMEOUT_SECONDS" 8; then
+		log "status=QUEUED reason=maintenance_lock_busy timeoutSeconds=${MAINTENANCE_LOCK_TIMEOUT_SECONDS}"
 		return 0
 	fi
 

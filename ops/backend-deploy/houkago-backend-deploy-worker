@@ -1,0 +1,678 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+readonly WORKER_ENV_FILE="${HOUKAGO_DEPLOY_WORKER_ENV_FILE:-/opt/houkago/env/backend-deploy-worker.env}"
+if [[ -r "$WORKER_ENV_FILE" ]]; then
+	set -a
+	# shellcheck disable=SC1090
+	source "$WORKER_ENV_FILE"
+	set +a
+fi
+
+readonly SPOOL_ROOT="${HOUKAGO_DEPLOY_SPOOL_ROOT:-/opt/houkago/deploy-jobs}"
+readonly INCOMING_DIRECTORY="${SPOOL_ROOT}/incoming"
+readonly PROCESSING_DIRECTORY="${SPOOL_ROOT}/processing"
+readonly SUCCEEDED_DIRECTORY="${SPOOL_ROOT}/succeeded"
+readonly FAILED_DIRECTORY="${SPOOL_ROOT}/failed"
+readonly TEMPORARY_DIRECTORY="${SPOOL_ROOT}/.tmp"
+readonly DOMAIN_LOCK_FILE="${SPOOL_ROOT}/worker.lock"
+readonly MAINTENANCE_LOCK_FILE="${HOUKAGO_MAINTENANCE_LOCK_FILE:-/opt/houkago/locks/backend-maintenance.lock}"
+readonly MAINTENANCE_LOCK_TIMEOUT_SECONDS="${HOUKAGO_MAINTENANCE_LOCK_TIMEOUT_SECONDS:-60}"
+readonly SERVER_ROOT="${HOUKAGO_SERVER_ROOT:-/opt/houkago/server}"
+readonly SERVER_GIT_USER="${HOUKAGO_SERVER_GIT_USER:-ubuntu}"
+readonly SERVER_ENV="${HOUKAGO_SERVER_ENV:-/opt/houkago/env/server.env}"
+readonly RELEASE_ENV="${HOUKAGO_RELEASE_ENV:-/opt/houkago/env/backend-release.env}"
+readonly STATE_ROOT="${HOUKAGO_DEPLOY_STATE_ROOT:-/opt/houkago/deploy-state}"
+readonly PREVIOUS_RELEASE_ENV="${HOUKAGO_PREVIOUS_RELEASE_ENV:-${STATE_ROOT}/previous-release.env}"
+readonly COMPOSE_FILE="${HOUKAGO_COMPOSE_FILE:-${SERVER_ROOT}/compose.prod.yml}"
+readonly APP_CONTAINER="${HOUKAGO_APP_CONTAINER:-server-app-1}"
+readonly MYSQL_CONTAINER="${HOUKAGO_MYSQL_CONTAINER:-server-mysql-1}"
+readonly IMAGE_REPOSITORY="${HOUKAGO_IMAGE_REPOSITORY:-ghcr.io/hokago-memories/houkago.server}"
+readonly IMAGE_SOURCE="${HOUKAGO_IMAGE_SOURCE:-https://github.com/HOKAGO-MEMORIES/houkago.server}"
+readonly PUBLIC_API_BASE_URL="${HOUKAGO_PUBLIC_API_BASE_URL:-https://api.houkago.moe}"
+readonly PUBLIC_DETAIL_SLUG="${HOUKAGO_PUBLIC_DETAIL_SLUG:-boj-2342}"
+readonly STARTUP_ATTEMPTS="${HOUKAGO_DEPLOY_STARTUP_ATTEMPTS:-36}"
+readonly STARTUP_INTERVAL_SECONDS="${HOUKAGO_DEPLOY_STARTUP_INTERVAL_SECONDS:-5}"
+
+failures=0
+queue_blocked=false
+current_processing_path=""
+temporary_paths=()
+last_failure_reason="unknown"
+
+log() {
+	printf 'event=houkago_backend_deploy_worker %s\n' "$*"
+}
+
+remember_temporary_path() {
+	temporary_paths+=("$1")
+}
+
+forget_temporary_path() {
+	local forgotten="$1" path remaining=()
+	if (( ${#temporary_paths[@]} > 0 )); then
+		for path in "${temporary_paths[@]}"; do
+			[[ "$path" == "$forgotten" ]] || remaining+=("$path")
+		done
+	fi
+	temporary_paths=("${remaining[@]}")
+}
+
+move_without_overwrite() {
+	local source_path="$1"
+	local target_path="$2"
+	[[ ! -e "$target_path" ]] || return 1
+	mv -- "$source_path" "$target_path"
+}
+
+mark_failed() {
+	local source_path="$1"
+	local reason="$2"
+	local base_name target_path timestamp
+
+	base_name="$(basename -- "$source_path")"
+	target_path="${FAILED_DIRECTORY}/${base_name}"
+	if [[ -e "$target_path" ]]; then
+		timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+		target_path="${FAILED_DIRECTORY}/${base_name%.json}.duplicate-${timestamp}-$$.json"
+	fi
+	if [[ -e "$source_path" ]] && ! move_without_overwrite "$source_path" "$target_path"; then
+		log "status=FAILED reason=failed_state_move job=${base_name}"
+		return 1
+	fi
+	current_processing_path=""
+	log "status=FAILED reason=${reason} job=${base_name}"
+}
+
+cleanup() {
+	local path
+	if (( ${#temporary_paths[@]} > 0 )); then
+		for path in "${temporary_paths[@]}"; do
+			rm -f -- "$path" 2>/dev/null || true
+		done
+	fi
+	if [[ -n "$current_processing_path" && -e "$current_processing_path" ]]; then
+		mark_failed "$current_processing_path" "worker_interrupted" 2>/dev/null || true
+	fi
+}
+
+validate_job() {
+	local job_path="$1"
+	python3 - "$job_path" "$IMAGE_REPOSITORY" <<'PY'
+import datetime
+import json
+import pathlib
+import re
+import sys
+import uuid
+
+path = pathlib.Path(sys.argv[1])
+repository = sys.argv[2]
+try:
+    with path.open("r", encoding="utf-8") as file:
+        job = json.load(file)
+except (OSError, UnicodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+expected = {"deliveryId", "revision", "image", "receivedAt", "notBefore"}
+if not isinstance(job, dict) or set(job) != expected:
+    raise SystemExit(1)
+
+values = [job.get(name) for name in expected]
+if not all(isinstance(value, str) for value in values):
+    raise SystemExit(1)
+
+delivery_id = job["deliveryId"]
+try:
+    normalized_delivery_id = str(uuid.UUID(delivery_id))
+except ValueError:
+    raise SystemExit(1)
+if normalized_delivery_id != delivery_id or path.name != f"{delivery_id}.json":
+    raise SystemExit(1)
+
+revision = job["revision"]
+if not re.fullmatch(r"[0-9a-f]{40}", revision) or set(revision) == {"0"}:
+    raise SystemExit(1)
+
+image = job["image"]
+if not re.fullmatch(re.escape(repository) + r"@sha256:[0-9a-f]{64}", image):
+    raise SystemExit(1)
+
+def parse_instant(value):
+    if not value.endswith("Z"):
+        raise ValueError
+    return datetime.datetime.fromisoformat(value[:-1] + "+00:00")
+
+try:
+    received_at = parse_instant(job["receivedAt"])
+    not_before = parse_instant(job["notBefore"])
+except ValueError:
+    raise SystemExit(1)
+
+grace_seconds = (not_before - received_at).total_seconds()
+if grace_seconds < 1 or grace_seconds > 30:
+    raise SystemExit(1)
+
+print(delivery_id)
+print(revision)
+print(image)
+print(job["receivedAt"])
+print(job["notBefore"])
+PY
+}
+
+wait_until_not_before() {
+	local received_at="$1"
+	local not_before="$2"
+	local wait_seconds
+	wait_seconds="$(python3 - "$not_before" <<'PY'
+import datetime
+import math
+import sys
+
+not_before = datetime.datetime.fromisoformat(sys.argv[1][:-1] + "+00:00")
+now = datetime.datetime.now(datetime.timezone.utc)
+print(max(0, min(30, math.ceil((not_before - now).total_seconds()))))
+PY
+)" || return 1
+	if (( wait_seconds > 0 )); then
+		sleep "$wait_seconds"
+	fi
+	log "phase=request_grace status=COMPLETE receivedAt=${received_at} notBefore=${not_before} readyAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+
+validate_release_env() {
+	local release_path="$1"
+	python3 - "$release_path" "$IMAGE_REPOSITORY" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+repository = sys.argv[2]
+values = {}
+try:
+    lines = path.read_text(encoding="utf-8").splitlines()
+except (OSError, UnicodeError):
+    raise SystemExit(1)
+for line in lines:
+    if not line or line.startswith("#") or "=" not in line:
+        raise SystemExit(1)
+    key, value = line.split("=", 1)
+    if key in values:
+        raise SystemExit(1)
+    values[key] = value
+
+expected = {
+    "HOUKAGO_SERVER_IMAGE",
+    "HOUKAGO_SERVER_REVISION",
+    "HOUKAGO_SERVER_SCHEMA_COMPATIBILITY",
+}
+if set(values) != expected:
+    raise SystemExit(1)
+if not re.fullmatch(re.escape(repository) + r"@sha256:[0-9a-f]{64}", values["HOUKAGO_SERVER_IMAGE"]):
+    raise SystemExit(1)
+if not re.fullmatch(r"[0-9a-f]{40}", values["HOUKAGO_SERVER_REVISION"]):
+    raise SystemExit(1)
+if values["HOUKAGO_SERVER_SCHEMA_COMPATIBILITY"] != "unchanged":
+    raise SystemExit(1)
+
+print(values["HOUKAGO_SERVER_IMAGE"])
+print(values["HOUKAGO_SERVER_REVISION"])
+print(values["HOUKAGO_SERVER_SCHEMA_COMPATIBILITY"])
+PY
+}
+
+create_release_env() {
+	local image="$1"
+	local revision="$2"
+	local release_path
+	release_path="$(mktemp "${TEMPORARY_DIRECTORY}/candidate-release.XXXXXX")" || return 1
+	remember_temporary_path "$release_path"
+	{
+		printf 'HOUKAGO_SERVER_IMAGE=%s\n' "$image"
+		printf 'HOUKAGO_SERVER_REVISION=%s\n' "$revision"
+		printf 'HOUKAGO_SERVER_SCHEMA_COMPATIBILITY=unchanged\n'
+	} > "$release_path"
+	chmod 0600 "$release_path" || return 1
+	printf '%s\n' "$release_path"
+}
+
+atomic_install_release() {
+	local source_path="$1"
+	local target_path="$2"
+	local target_directory temporary_path
+	target_directory="$(dirname -- "$target_path")"
+	temporary_path="$(mktemp "${target_directory}/.$(basename -- "$target_path").XXXXXX")" || return 1
+	remember_temporary_path "$temporary_path"
+	cat -- "$source_path" > "$temporary_path" || return 1
+	chmod 0644 "$temporary_path" || return 1
+	mv -f -- "$temporary_path" "$target_path" || return 1
+	forget_temporary_path "$temporary_path"
+}
+
+run_compose_with_release() {
+	local release_path="$1"
+	shift
+	env -u HOUKAGO_SERVER_IMAGE -u HOUKAGO_SERVER_REVISION docker compose \
+		--env-file "$SERVER_ENV" \
+		--env-file "$release_path" \
+		-f "$COMPOSE_FILE" \
+		"$@"
+}
+
+verify_compose_resolution() {
+	local release_path="$1"
+	local expected_image="$2"
+	local config_json
+	config_json="$(run_compose_with_release "$release_path" --profile sync config --format json)" || return 1
+	printf '%s' "$config_json" | python3 -c '
+import json
+import sys
+
+expected = sys.argv[1]
+config = json.load(sys.stdin)
+services = config.get("services", {})
+if services.get("app", {}).get("image") != expected:
+    raise SystemExit(1)
+if services.get("sync", {}).get("image") != expected:
+    raise SystemExit(1)
+' "$expected_image"
+}
+
+run_server_git() {
+	if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+		runuser -u "$SERVER_GIT_USER" -- git -C "$SERVER_ROOT" "$@"
+	else
+		git -C "$SERVER_ROOT" "$@"
+	fi
+}
+
+verify_migration_gate() {
+	local current_revision="$1"
+	local target_revision="$2"
+	local origin_main migration_files
+
+	run_server_git fetch --quiet origin main || return 1
+	run_server_git cat-file -e "${current_revision}^{commit}" 2>/dev/null || return 1
+	run_server_git cat-file -e "${target_revision}^{commit}" 2>/dev/null || return 1
+	origin_main="$(run_server_git rev-parse refs/remotes/origin/main)" || return 1
+	run_server_git merge-base --is-ancestor "$target_revision" "$origin_main" || return 1
+	run_server_git merge-base --is-ancestor "$current_revision" "$target_revision" || return 1
+	migration_files="$(run_server_git diff --name-only "$current_revision" "$target_revision" -- \
+		src/main/resources/db/migration)" || return 1
+	if [[ -n "$migration_files" ]]; then
+		log "phase=migration_gate status=MANUAL_REVIEW_REQUIRED revision=${target_revision}"
+		return 2
+	fi
+	log "phase=migration_gate status=PASS schemaCompatibility=unchanged revision=${target_revision}"
+}
+
+verify_artifact() {
+	local image="$1"
+	local revision="$2"
+	local inspect_json
+	docker pull "$image" || return 1
+	inspect_json="$(docker image inspect "$image")" || return 1
+	printf '%s' "$inspect_json" | python3 -c '
+import json
+import sys
+
+image = sys.argv[1]
+revision = sys.argv[2]
+source = sys.argv[3]
+data = json.load(sys.stdin)[0]
+labels = data.get("Config", {}).get("Labels") or {}
+if data.get("Os") != "linux" or data.get("Architecture") != "arm64":
+    raise SystemExit(1)
+if labels.get("org.opencontainers.image.revision") != revision:
+    raise SystemExit(1)
+if labels.get("org.opencontainers.image.source") != source:
+    raise SystemExit(1)
+if image not in (data.get("RepoDigests") or []):
+    raise SystemExit(1)
+' "$image" "$revision" "$IMAGE_SOURCE"
+}
+
+container_id() {
+	docker inspect --format '{{.Id}}' "$1"
+}
+
+verify_runtime() {
+	local expected_image="$1"
+	local expected_mysql_id="$2"
+	local attempt mysql_health health_response candidate_image_id app_image_id restart_before restart_after
+
+	candidate_image_id="$(docker image inspect --format '{{.Id}}' "$expected_image")" || return 1
+	for ((attempt = 1; attempt <= STARTUP_ATTEMPTS; attempt++)); do
+		mysql_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+			"$MYSQL_CONTAINER" 2>/dev/null || true)"
+		health_response="$(curl -fsS --max-time 10 http://127.0.0.1:8080/actuator/health 2>/dev/null || true)"
+		app_image_id="$(docker inspect --format '{{.Image}}' "$APP_CONTAINER" 2>/dev/null || true)"
+		if [[ "$mysql_health" == "healthy" \
+				&& "$health_response" == *'"status":"UP"'* \
+				&& "$app_image_id" == "$candidate_image_id" ]]; then
+			break
+		fi
+		if (( attempt == STARTUP_ATTEMPTS )); then
+			return 1
+		fi
+		sleep "$STARTUP_INTERVAL_SECONDS"
+	done
+
+	[[ "$(container_id "$MYSQL_CONTAINER")" == "$expected_mysql_id" ]] || return 1
+	restart_before="$(docker inspect --format '{{.RestartCount}}' "$APP_CONTAINER")" || return 1
+	sleep 5
+	restart_after="$(docker inspect --format '{{.RestartCount}}' "$APP_CONTAINER")" || return 1
+	[[ "$restart_before" == "$restart_after" ]] || return 1
+
+	for url in \
+			"${PUBLIC_API_BASE_URL}/api/posts?page=0&size=1" \
+			"${PUBLIC_API_BASE_URL}/api/posts?featured=true&page=0&size=1" \
+			"${PUBLIC_API_BASE_URL}/api/posts/${PUBLIC_DETAIL_SLUG}"; do
+		[[ "$(curl -o /dev/null -sS -w '%{http_code}' --max-time 15 "$url")" == "200" ]] || return 1
+	done
+}
+
+recreate_app() {
+	local release_path="$1"
+	local expected_image="$2"
+	local mysql_id="$3"
+	run_compose_with_release "$release_path" pull app || return 1
+	log "phase=app_recreate status=STARTED at=$(date -u +%Y-%m-%dT%H:%M:%SZ) image=${expected_image}"
+	run_compose_with_release "$release_path" up -d --no-deps --force-recreate app || return 1
+	verify_runtime "$expected_image" "$mysql_id"
+}
+
+rollback_release() {
+	local rollback_env="$1"
+	local mysql_id="$2"
+	local release_output rollback_image rollback_revision rollback_schema
+	release_output="$(validate_release_env "$rollback_env")" || return 1
+	rollback_image="$(printf '%s\n' "$release_output" | sed -n '1p')"
+	rollback_revision="$(printf '%s\n' "$release_output" | sed -n '2p')"
+	rollback_schema="$(printf '%s\n' "$release_output" | sed -n '3p')"
+	[[ "$rollback_schema" == "unchanged" ]] || return 1
+	verify_artifact "$rollback_image" "$rollback_revision" || return 1
+	verify_compose_resolution "$rollback_env" "$rollback_image" || return 1
+	recreate_app "$rollback_env" "$rollback_image" "$mysql_id" || return 1
+	log "phase=rollback status=SUCCESS revision=${rollback_revision} image=${rollback_image}"
+}
+
+finalize_candidate_release() {
+	local candidate_env="$1"
+	local processing_path="$2"
+	local succeeded_path="$3"
+	local mysql_id="$4"
+	local current_backup previous_backup="" previous_was_present=false recovery_failed=false
+
+	current_backup="$(mktemp "${TEMPORARY_DIRECTORY}/current-release-backup.XXXXXX")" || {
+		rollback_release "$RELEASE_ENV" "$mysql_id" && return 1
+		return 2
+	}
+	remember_temporary_path "$current_backup"
+	cp -- "$RELEASE_ENV" "$current_backup" && chmod 0600 "$current_backup" || {
+		rollback_release "$RELEASE_ENV" "$mysql_id" && return 1
+		return 2
+	}
+
+	if [[ -e "$PREVIOUS_RELEASE_ENV" ]]; then
+		validate_release_env "$PREVIOUS_RELEASE_ENV" >/dev/null || {
+			rollback_release "$current_backup" "$mysql_id" && return 1
+			return 2
+		}
+		previous_backup="$(mktemp "${TEMPORARY_DIRECTORY}/previous-release-backup.XXXXXX")" || {
+			rollback_release "$current_backup" "$mysql_id" && return 1
+			return 2
+		}
+		remember_temporary_path "$previous_backup"
+		cp -- "$PREVIOUS_RELEASE_ENV" "$previous_backup" && chmod 0600 "$previous_backup" || {
+			rollback_release "$current_backup" "$mysql_id" && return 1
+			return 2
+		}
+		previous_was_present=true
+	fi
+
+	if atomic_install_release "$current_backup" "$PREVIOUS_RELEASE_ENV" \
+			&& atomic_install_release "$candidate_env" "$RELEASE_ENV" \
+			&& move_without_overwrite "$processing_path" "$succeeded_path"; then
+		return 0
+	fi
+
+	rollback_release "$current_backup" "$mysql_id" || recovery_failed=true
+	atomic_install_release "$current_backup" "$RELEASE_ENV" || recovery_failed=true
+	if [[ "$previous_was_present" == "true" ]]; then
+		atomic_install_release "$previous_backup" "$PREVIOUS_RELEASE_ENV" || recovery_failed=true
+	else
+		rm -f -- "$PREVIOUS_RELEASE_ENV" || recovery_failed=true
+	fi
+
+	if [[ "$recovery_failed" == "true" ]]; then
+		return 2
+	fi
+	return 1
+}
+
+process_job() {
+	local incoming_path="$1"
+	local validation_output delivery_id revision image received_at not_before base_name processing_path
+	local current_output current_image current_revision current_schema candidate_env mysql_id migration_status
+	local finalization_status
+
+	base_name="$(basename -- "$incoming_path")"
+	if [[ ! -f "$incoming_path" || -L "$incoming_path" ]]; then
+		mark_failed "$incoming_path" "invalid_job_file" || true
+		return 1
+	fi
+	if ! validation_output="$(validate_job "$incoming_path" 2>/dev/null)"; then
+		mark_failed "$incoming_path" "invalid_job" || true
+		return 1
+	fi
+	delivery_id="$(printf '%s\n' "$validation_output" | sed -n '1p')"
+	revision="$(printf '%s\n' "$validation_output" | sed -n '2p')"
+	image="$(printf '%s\n' "$validation_output" | sed -n '3p')"
+	received_at="$(printf '%s\n' "$validation_output" | sed -n '4p')"
+	not_before="$(printf '%s\n' "$validation_output" | sed -n '5p')"
+
+	for state_directory in "$PROCESSING_DIRECTORY" "$SUCCEEDED_DIRECTORY" "$FAILED_DIRECTORY"; do
+		if [[ -e "${state_directory}/${base_name}" ]]; then
+			mark_failed "$incoming_path" "duplicate_delivery" || true
+			return 1
+		fi
+	done
+
+	wait_until_not_before "$received_at" "$not_before" || {
+		mark_failed "$incoming_path" "invalid_not_before" || true
+		return 1
+	}
+
+	exec 8>"$MAINTENANCE_LOCK_FILE" || {
+		mark_failed "$incoming_path" "maintenance_lock_open" || true
+		return 1
+	}
+	if ! flock -w "$MAINTENANCE_LOCK_TIMEOUT_SECONDS" 8; then
+		log "status=QUEUED reason=maintenance_lock_busy timeoutSeconds=${MAINTENANCE_LOCK_TIMEOUT_SECONDS} job=${base_name}"
+		exec 8>&-
+		queue_blocked=true
+		return 0
+	fi
+
+	processing_path="${PROCESSING_DIRECTORY}/${base_name}"
+	if ! move_without_overwrite "$incoming_path" "$processing_path"; then
+		mark_failed "$incoming_path" "processing_move" || true
+		exec 8>&-
+		return 1
+	fi
+	current_processing_path="$processing_path"
+
+	if ! current_output="$(validate_release_env "$RELEASE_ENV")"; then
+		last_failure_reason="invalid_current_release"
+	elif current_image="$(printf '%s\n' "$current_output" | sed -n '1p')" \
+			&& current_revision="$(printf '%s\n' "$current_output" | sed -n '2p')" \
+			&& current_schema="$(printf '%s\n' "$current_output" | sed -n '3p')" \
+			&& [[ "$current_schema" == "unchanged" ]]; then
+		last_failure_reason="migration_gate"
+		verify_migration_gate "$current_revision" "$revision"
+		migration_status=$?
+		if [[ "$migration_status" -eq 0 ]]; then
+			last_failure_reason="artifact_verification"
+			if verify_artifact "$image" "$revision"; then
+				last_failure_reason="candidate_release"
+				candidate_env="$(create_release_env "$image" "$revision")"
+				[[ -z "$candidate_env" ]] || remember_temporary_path "$candidate_env"
+				if [[ -n "$candidate_env" ]] && verify_compose_resolution "$candidate_env" "$image"; then
+					mysql_id="$(container_id "$MYSQL_CONTAINER")"
+					last_failure_reason="candidate_runtime"
+					if recreate_app "$candidate_env" "$image" "$mysql_id"; then
+						finalize_candidate_release \
+							"$candidate_env" \
+							"$processing_path" \
+							"${SUCCEEDED_DIRECTORY}/${base_name}" \
+							"$mysql_id"
+						finalization_status=$?
+						if [[ "$finalization_status" -eq 0 ]]; then
+							current_processing_path=""
+							log "status=SUCCESS deliveryId=${delivery_id} revision=${revision} image=${image}"
+							exec 8>&-
+							return 0
+						elif [[ "$finalization_status" -eq 2 ]]; then
+							last_failure_reason="release_state_recovery_failed_manual_recovery_required"
+						else
+							last_failure_reason="release_state_failed_candidate_rolled_back"
+						fi
+					else
+						last_failure_reason="candidate_health"
+						if ! rollback_release "$RELEASE_ENV" "$mysql_id"; then
+							last_failure_reason="rollback_failed_manual_recovery_required"
+						fi
+					fi
+				fi
+			fi
+		elif [[ "$migration_status" -eq 2 ]]; then
+			last_failure_reason="migration_review_required"
+		fi
+	fi
+
+	mark_failed "$processing_path" "$last_failure_reason" || true
+	exec 8>&-
+	return 1
+}
+
+retry_failed_job() {
+	local delivery_id="$1"
+	local failed_path incoming_path validation_output timestamp history_path
+	[[ "$delivery_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || return 1
+	failed_path="${FAILED_DIRECTORY}/${delivery_id}.json"
+	incoming_path="${INCOMING_DIRECTORY}/${delivery_id}.json"
+	[[ -f "$failed_path" && ! -L "$failed_path" ]] || return 1
+	validation_output="$(validate_job "$failed_path" 2>/dev/null)" || return 1
+	[[ "$(printf '%s\n' "$validation_output" | sed -n '1p')" == "$delivery_id" ]] || return 1
+	for state_directory in "$INCOMING_DIRECTORY" "$PROCESSING_DIRECTORY" "$SUCCEEDED_DIRECTORY"; do
+		[[ ! -e "${state_directory}/${delivery_id}.json" ]] || return 1
+	done
+	timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+	history_path="${FAILED_DIRECTORY}/${delivery_id}.operator-retry-${timestamp}-$$.json"
+	cp -- "$failed_path" "$history_path" && chmod 0640 "$history_path" || return 1
+	move_without_overwrite "$failed_path" "$incoming_path" || {
+		rm -f -- "$history_path"
+		return 1
+	}
+	log "status=REQUEUED reason=operator_retry deliveryId=${delivery_id}"
+}
+
+show_status() {
+	local current_output previous_output
+	current_output="$(validate_release_env "$RELEASE_ENV")" || return 1
+	log "status=CURRENT revision=$(printf '%s\n' "$current_output" | sed -n '2p') image=$(printf '%s\n' "$current_output" | sed -n '1p')"
+	if previous_output="$(validate_release_env "$PREVIOUS_RELEASE_ENV" 2>/dev/null)"; then
+		log "status=PREVIOUS revision=$(printf '%s\n' "$previous_output" | sed -n '2p') image=$(printf '%s\n' "$previous_output" | sed -n '1p')"
+	else
+		log "status=PREVIOUS state=unavailable"
+	fi
+}
+
+manual_rollback() {
+	local current_backup mysql_id
+	exec 9>"$DOMAIN_LOCK_FILE" || return 1
+	flock -n 9 || return 1
+	exec 8>"$MAINTENANCE_LOCK_FILE" || return 1
+	flock -w "$MAINTENANCE_LOCK_TIMEOUT_SECONDS" 8 || return 1
+	validate_release_env "$RELEASE_ENV" >/dev/null || return 1
+	validate_release_env "$PREVIOUS_RELEASE_ENV" >/dev/null || return 1
+	current_backup="$(mktemp "${TEMPORARY_DIRECTORY}/rollback-current.XXXXXX")" || return 1
+	remember_temporary_path "$current_backup"
+	cp -- "$RELEASE_ENV" "$current_backup" || return 1
+	mysql_id="$(container_id "$MYSQL_CONTAINER")" || return 1
+	rollback_release "$PREVIOUS_RELEASE_ENV" "$mysql_id" || return 1
+	atomic_install_release "$PREVIOUS_RELEASE_ENV" "$RELEASE_ENV" || return 1
+	atomic_install_release "$current_backup" "$PREVIOUS_RELEASE_ENV" || return 1
+	log "status=SUCCESS operation=manual_image_rollback schemaRollback=not_performed"
+}
+
+dry_run_job() {
+	local job_path="$1"
+	local output revision image current_output current_revision candidate_env migration_status
+	output="$(validate_job "$job_path")" || return 1
+	revision="$(printf '%s\n' "$output" | sed -n '2p')"
+	image="$(printf '%s\n' "$output" | sed -n '3p')"
+	current_output="$(validate_release_env "$RELEASE_ENV")" || return 1
+	current_revision="$(printf '%s\n' "$current_output" | sed -n '2p')"
+	verify_migration_gate "$current_revision" "$revision"
+	migration_status=$?
+	[[ "$migration_status" -eq 0 ]] || return "$migration_status"
+	verify_artifact "$image" "$revision" || return 1
+	candidate_env="$(create_release_env "$image" "$revision")" || return 1
+	remember_temporary_path "$candidate_env"
+	verify_compose_resolution "$candidate_env" "$image" || return 1
+	log "status=SUCCESS operation=dry_run revision=${revision} image=${image}"
+}
+
+main() {
+	local jobs job_path
+	for directory in "$INCOMING_DIRECTORY" "$PROCESSING_DIRECTORY" "$SUCCEEDED_DIRECTORY" \
+			"$FAILED_DIRECTORY" "$TEMPORARY_DIRECTORY" "$STATE_ROOT"; do
+		[[ -d "$directory" ]] || {
+			log "status=FAILED reason=missing_directory"
+			return 1
+		}
+	done
+	exec 9>"$DOMAIN_LOCK_FILE" || return 1
+	if ! flock -n 9; then
+		log "status=QUEUED reason=deploy_lock_busy"
+		return 0
+	fi
+
+	while true; do
+		shopt -s nullglob
+		jobs=("${INCOMING_DIRECTORY}"/*.json)
+		shopt -u nullglob
+		[[ ${#jobs[@]} -gt 0 ]] || break
+		for job_path in "${jobs[@]}"; do
+			if ! process_job "$job_path"; then
+				failures=$((failures + 1))
+			fi
+			[[ "$queue_blocked" == "false" ]] || break 2
+		done
+	done
+	log "status=COMPLETE failures=${failures} queued=${queue_blocked}"
+	[[ "$failures" -eq 0 ]]
+}
+
+dispatch() {
+	case "${1:-run}" in
+		run) [[ $# -le 1 ]] || return 2; main ;;
+		status) [[ $# -eq 1 ]] || return 2; show_status ;;
+		retry) [[ $# -eq 2 ]] || return 2; retry_failed_job "$2" ;;
+		rollback) [[ $# -eq 1 ]] || return 2; manual_rollback ;;
+		dry-run) [[ $# -eq 2 ]] || return 2; dry_run_job "$2" ;;
+		*) printf 'usage: %s [run | status | retry <delivery-id> | rollback | dry-run <job-file>]\n' "$0" >&2; return 2 ;;
+	esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	trap cleanup EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM HUP
+	dispatch "$@"
+fi

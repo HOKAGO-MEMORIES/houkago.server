@@ -1,6 +1,8 @@
 spring:
   application:
     name: houkago.server
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
   profiles:
     default: local
   jpa:
@@ -12,6 +14,7 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+  shutdown: graceful
 
 management:
   endpoints:
@@ -38,3 +41,10 @@ houkago:
         repository-full-name: ${HOUKAGO_POSTS_WEBHOOK_REPOSITORY_FULL_NAME:}
         ref: ${HOUKAGO_POSTS_WEBHOOK_REF:refs/heads/main}
         spool-root: ${HOUKAGO_POSTS_WEBHOOK_SPOOL_ROOT:}
+  deploy:
+    webhook:
+      enabled: ${HOUKAGO_DEPLOY_WEBHOOK_ENABLED:false}
+      secret: ${HOUKAGO_DEPLOY_WEBHOOK_SECRET:}
+      image-repository: ${HOUKAGO_DEPLOY_IMAGE_REPOSITORY:}
+      spool-root: ${HOUKAGO_DEPLOY_SPOOL_ROOT:}
+      worker-grace-period: ${HOUKAGO_DEPLOY_WORKER_GRACE_PERIOD:5s}

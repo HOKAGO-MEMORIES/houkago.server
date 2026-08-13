@@ -45,6 +45,10 @@ val testContentSyncWorker by tasks.registering(Exec::class) {
 	commandLine("bash", "ops/content-sync/test-houkago-content-sync-worker.sh")
 }
 
+val testBackendDeployWorker by tasks.registering(Exec::class) {
+	commandLine("bash", "ops/backend-deploy/test-houkago-backend-deploy-worker.sh")
+}
+
 tasks.named("test") {
-	dependsOn(testContentSyncWorker)
+	dependsOn(testContentSyncWorker, testBackendDeployWorker)
 }
