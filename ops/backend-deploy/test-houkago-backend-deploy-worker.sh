@@ -318,6 +318,10 @@ test_service_security_contract() {
 	grep -Eq '^UMask=0*077$' "$SERVICE_UNIT" || fail "deploy worker UMask must be restrictive"
 	grep -Fq 'ProtectSystem=strict' "$SERVICE_UNIT" || fail "missing systemd filesystem protection"
 	grep -Fq '/opt/houkago/locks' "$SERVICE_UNIT" || fail "maintenance lock path is not writable"
+	grep -Eq '^ReadWritePaths=.* /opt/houkago/server/\.git([[:space:]]|$)' "$SERVICE_UNIT" \
+		|| fail "server Git metadata must be writable for the migration gate fetch"
+	grep -Eq '^ReadOnlyPaths=/opt/houkago/server([[:space:]]|$)' "$SERVICE_UNIT" \
+		|| fail "server working tree must remain read-only"
 	! grep -Fq 'docker compose down' "$WORKER_SCRIPT" || fail "worker must not stop the full stack"
 	! grep -Eq '(^|[[:space:]])eval([[:space:]]|$)' "$WORKER_SCRIPT" || fail "worker must not eval payload"
 }
