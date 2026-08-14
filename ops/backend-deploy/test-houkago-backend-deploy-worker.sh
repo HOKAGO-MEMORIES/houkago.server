@@ -318,6 +318,12 @@ test_service_security_contract() {
 	grep -Eq '^UMask=0*077$' "$SERVICE_UNIT" || fail "deploy worker UMask must be restrictive"
 	grep -Fq 'ProtectSystem=strict' "$SERVICE_UNIT" || fail "missing systemd filesystem protection"
 	grep -Fq '/opt/houkago/locks' "$SERVICE_UNIT" || fail "maintenance lock path is not writable"
+	grep -Eq '^ReadWritePaths=.* /opt/houkago/env([[:space:]]|$)' "$SERVICE_UNIT" \
+		|| fail "release env directory must be writable for atomic publication"
+	grep -Eq '^ReadOnlyPaths=.* /opt/houkago/env/server\.env([[:space:]]|$)' "$SERVICE_UNIT" \
+		|| fail "server secrets must remain read-only"
+	grep -Eq '^ReadOnlyPaths=.* /opt/houkago/env/backend-deploy-worker\.env([[:space:]]|$)' "$SERVICE_UNIT" \
+		|| fail "deploy worker secrets must remain read-only"
 	grep -Eq '^ReadWritePaths=.* /opt/houkago/server/\.git([[:space:]]|$)' "$SERVICE_UNIT" \
 		|| fail "server Git metadata must be writable for the migration gate fetch"
 	grep -Eq '^ReadOnlyPaths=/opt/houkago/server([[:space:]]|$)' "$SERVICE_UNIT" \
