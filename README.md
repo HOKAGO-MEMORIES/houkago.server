@@ -303,11 +303,12 @@ release file.
 
 ## OCI Backend Deploy Worker
 
-`POST /internal/deployments/backend` is the authenticated deploy request boundary. It is disabled
-by default. When enabled, it accepts a delivery UUID, full Git revision, and allowlisted immutable
-GHCR digest, then atomically publishes a minimal job under `/opt/houkago/deploy-jobs`. The job also
-records `receivedAt` and a short `notBefore` boundary so the host worker does not begin replacing the
-request-serving app immediately after publication.
+`POST /internal/deployments/backend` is the authenticated deploy request boundary. It remains
+disabled by default in application configuration and is explicitly enabled in Production. It accepts
+a delivery UUID, full Git revision, and allowlisted immutable GHCR digest, then atomically publishes
+a minimal job under `/opt/houkago/deploy-jobs`. The job also records `receivedAt` and a short
+`notBefore` boundary so the host worker does not begin replacing the request-serving app immediately
+after publication.
 
 The root-owned host worker is installed separately as
 `/usr/local/sbin/houkago-backend-deploy-worker`. It acquires the deploy-domain lock and then the
@@ -330,8 +331,13 @@ review. The single-app recreate path uses graceful Spring shutdown and a 30-seco
 grace, but a short 502 window remains possible; this is not a zero-downtime deployment design.
 
 The systemd path/service and worker sources live in `ops/systemd` and `ops/backend-deploy`. The
-GitHub image-publish workflow does not call this endpoint yet; that Production trigger and complete
-deploy/rollback E2E belong to the next rollout phase.
+Production path is enabled and the service remains an idle oneshot when the queue is empty. A
+same-release synthetic request verified HTTP `202` completion before Worker processing and completed
+as `already_current` without app recreation or release-state rotation. The Content Worker now uses
+the same canonical release env and shared maintenance lock; its temporary local-image compatibility
+guard is removed. The GitHub image-publish workflow does not call this endpoint yet; that Production
+trigger, a real new-revision deploy, and complete previous-release rollback E2E belong to the next
+rollout phase.
 
 ## Verification
 
