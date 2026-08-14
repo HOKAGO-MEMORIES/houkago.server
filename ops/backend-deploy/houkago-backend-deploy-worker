@@ -512,45 +512,55 @@ process_job() {
 			&& current_revision="$(printf '%s\n' "$current_output" | sed -n '2p')" \
 			&& current_schema="$(printf '%s\n' "$current_output" | sed -n '3p')" \
 			&& [[ "$current_schema" == "unchanged" ]]; then
-		last_failure_reason="migration_gate"
-		verify_migration_gate "$current_revision" "$revision"
-		migration_status=$?
-		if [[ "$migration_status" -eq 0 ]]; then
-			last_failure_reason="artifact_verification"
-			if verify_artifact "$image" "$revision"; then
-				last_failure_reason="candidate_release"
-				candidate_env="$(create_release_env "$image" "$revision")"
-				[[ -z "$candidate_env" ]] || remember_temporary_path "$candidate_env"
-				if [[ -n "$candidate_env" ]] && verify_compose_resolution "$candidate_env" "$image"; then
-					mysql_id="$(container_id "$MYSQL_CONTAINER")"
-					last_failure_reason="candidate_runtime"
-					if recreate_app "$candidate_env" "$image" "$mysql_id"; then
-						finalize_candidate_release \
-							"$candidate_env" \
-							"$processing_path" \
-							"${SUCCEEDED_DIRECTORY}/${base_name}" \
-							"$mysql_id"
-						finalization_status=$?
-						if [[ "$finalization_status" -eq 0 ]]; then
-							current_processing_path=""
-							log "status=SUCCESS deliveryId=${delivery_id} revision=${revision} image=${image}"
-							exec 8>&-
-							return 0
-						elif [[ "$finalization_status" -eq 2 ]]; then
-							last_failure_reason="release_state_recovery_failed_manual_recovery_required"
+		if [[ "$current_image" == "$image" && "$current_revision" == "$revision" ]]; then
+			if move_without_overwrite "$processing_path" "${SUCCEEDED_DIRECTORY}/${base_name}"; then
+				current_processing_path=""
+				log "status=SUCCESS operation=already_current deliveryId=${delivery_id} revision=${revision} image=${image}"
+				exec 8>&-
+				return 0
+			fi
+			last_failure_reason="already_current_state_move"
+		else
+			last_failure_reason="migration_gate"
+			verify_migration_gate "$current_revision" "$revision"
+			migration_status=$?
+			if [[ "$migration_status" -eq 0 ]]; then
+				last_failure_reason="artifact_verification"
+				if verify_artifact "$image" "$revision"; then
+					last_failure_reason="candidate_release"
+					candidate_env="$(create_release_env "$image" "$revision")"
+					[[ -z "$candidate_env" ]] || remember_temporary_path "$candidate_env"
+					if [[ -n "$candidate_env" ]] && verify_compose_resolution "$candidate_env" "$image"; then
+						mysql_id="$(container_id "$MYSQL_CONTAINER")"
+						last_failure_reason="candidate_runtime"
+						if recreate_app "$candidate_env" "$image" "$mysql_id"; then
+							finalize_candidate_release \
+								"$candidate_env" \
+								"$processing_path" \
+								"${SUCCEEDED_DIRECTORY}/${base_name}" \
+								"$mysql_id"
+							finalization_status=$?
+							if [[ "$finalization_status" -eq 0 ]]; then
+								current_processing_path=""
+								log "status=SUCCESS deliveryId=${delivery_id} revision=${revision} image=${image}"
+								exec 8>&-
+								return 0
+							elif [[ "$finalization_status" -eq 2 ]]; then
+								last_failure_reason="release_state_recovery_failed_manual_recovery_required"
+							else
+								last_failure_reason="release_state_failed_candidate_rolled_back"
+							fi
 						else
-							last_failure_reason="release_state_failed_candidate_rolled_back"
-						fi
-					else
-						last_failure_reason="candidate_health"
-						if ! rollback_release "$RELEASE_ENV" "$mysql_id"; then
-							last_failure_reason="rollback_failed_manual_recovery_required"
+							last_failure_reason="candidate_health"
+							if ! rollback_release "$RELEASE_ENV" "$mysql_id"; then
+								last_failure_reason="rollback_failed_manual_recovery_required"
+							fi
 						fi
 					fi
 				fi
+			elif [[ "$migration_status" -eq 2 ]]; then
+				last_failure_reason="migration_review_required"
 			fi
-		elif [[ "$migration_status" -eq 2 ]]; then
-			last_failure_reason="migration_review_required"
 		fi
 	fi
 

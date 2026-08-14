@@ -155,6 +155,28 @@ test_successful_deploy_and_response_grace_order() (
 	(( grace_line < recreate_line )) || fail "app recreate started before request grace completed"
 )
 
+test_same_release_is_noop() (
+	local delivery_id="88888888-8888-4888-8888-888888888888"
+	local output
+	write_release "$RELEASE_ENV" "$OLD_IMAGE" "$OLD_REVISION"
+	rm -f -- "$PREVIOUS_RELEASE_ENV"
+	reset_spool
+	write_job "$INCOMING_DIRECTORY" "$delivery_id" "$OLD_REVISION" "$OLD_IMAGE"
+	wait_until_not_before() { return 0; }
+	verify_migration_gate() { fail "same release checked migrations"; }
+	verify_artifact() { fail "same release pulled an artifact"; }
+	verify_compose_resolution() { fail "same release resolved Compose"; }
+	recreate_app() { fail "same release recreated app"; }
+
+	output="$(process_job "${INCOMING_DIRECTORY}/${delivery_id}.json")" || fail "same release failed"
+	assert_file "${SUCCEEDED_DIRECTORY}/${delivery_id}.json"
+	assert_equals "$OLD_IMAGE" "$(validate_release_env "$RELEASE_ENV" | sed -n '1p')" "same release current image"
+	assert_equals "$OLD_REVISION" "$(validate_release_env "$RELEASE_ENV" | sed -n '2p')" "same release current revision"
+	[[ ! -e "$PREVIOUS_RELEASE_ENV" ]] || fail "same release created previous state"
+	printf '%s\n' "$output" | grep -Fq 'operation=already_current' \
+		|| fail "same release no-op was not logged"
+)
+
 test_migration_gate_is_fail_closed() (
 	local delivery_id="33333333-3333-4333-8333-333333333333"
 	local recreate_marker="${TEMPORARY_ROOT}/migration-recreate-called"
@@ -302,6 +324,7 @@ test_service_security_contract() {
 
 test_job_validation
 test_successful_deploy_and_response_grace_order
+test_same_release_is_noop
 test_migration_gate_is_fail_closed
 test_health_failure_rolls_back_without_changing_release
 test_release_state_failure_restores_app_and_state
