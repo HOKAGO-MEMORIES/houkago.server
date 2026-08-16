@@ -14,5 +14,6 @@ public record PostDetailResponse(
 		String thumbnail,
 		String series,
 		boolean featured,
-		String rawBody) {
+		String rawBody,
+		String assetBaseUrl) {
 }

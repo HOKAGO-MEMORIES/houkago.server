@@ -24,12 +24,15 @@ public final class PostPublicAssetPath {
 	}
 
 	public static String encodedAssetPath(String slug, String assetRelativePath) {
-		String requiredSlug = requirePathSegment("slug", slug);
 		String normalizedAssetPath = requireRelativeAssetPath(assetRelativePath);
-		return PUBLIC_PATH_PREFIX + "/" + encodeSegment(requiredSlug) + "/"
+		return encodedBasePath(slug)
 				+ Arrays.stream(normalizedAssetPath.split("/"))
 						.map(PostPublicAssetPath::encodeSegment)
 						.collect(Collectors.joining("/"));
+	}
+
+	public static String encodedBasePath(String slug) {
+		return PUBLIC_PATH_PREFIX + "/" + encodeSegment(requirePathSegment("slug", slug)) + "/";
 	}
 
 	static String requirePathSegment(String field, String value) {

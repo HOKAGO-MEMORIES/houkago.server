@@ -35,7 +35,8 @@ import com.houkago.server.content.post.readmodel.PostReadModelRepository;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
 		"spring.jpa.hibernate.ddl-auto=validate",
 		"spring.flyway.enabled=true",
-		"houkago.resync.enabled=false"
+		"houkago.resync.enabled=false",
+		"houkago.assets.public-origin=https://assets.example.test"
 })
 class PostReadApiIntegrationTest {
 
@@ -249,6 +250,8 @@ class PostReadApiIntegrationTest {
 		JsonNode root = objectMapper.readTree(response.getBody());
 		assertThat(root.path("slug").asText()).isEqualTo("detail-post");
 		assertThat(root.path("rawBody").asText()).isEqualTo("## detail raw body");
+		assertThat(root.path("assetBaseUrl").asText())
+				.isEqualTo("https://assets.example.test/assets/posts/detail-post/");
 		assertThat(textValues(root.path("tags"))).containsExactly("java", "spring");
 	}
 

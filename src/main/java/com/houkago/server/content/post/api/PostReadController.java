@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.houkago.server.content.post.asset.PostPublicAssetUrl;
 import com.houkago.server.content.post.query.PostReadDetail;
 import com.houkago.server.content.post.query.PostReadListItem;
 import com.houkago.server.content.post.query.PostReadService;
@@ -22,9 +23,11 @@ import com.houkago.server.content.post.query.PostReadService;
 public class PostReadController {
 
 	private final PostReadService postReadService;
+	private final PostPublicAssetUrl publicAssetUrl;
 
-	public PostReadController(PostReadService postReadService) {
+	public PostReadController(PostReadService postReadService, PostPublicAssetUrl publicAssetUrl) {
 		this.postReadService = postReadService;
+		this.publicAssetUrl = publicAssetUrl;
 	}
 
 	@GetMapping
@@ -39,7 +42,7 @@ public class PostReadController {
 	@GetMapping("/{slug}")
 	public PostDetailResponse getPost(@PathVariable String slug) {
 		return postReadService.findPublicPostBySlug(slug)
-				.map(PostReadController::toDetailResponse)
+				.map(this::toDetailResponse)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
 	}
 
@@ -57,7 +60,7 @@ public class PostReadController {
 				post.featured());
 	}
 
-	private static PostDetailResponse toDetailResponse(PostReadDetail post) {
+	private PostDetailResponse toDetailResponse(PostReadDetail post) {
 		return new PostDetailResponse(
 				post.slug(),
 				post.title(),
@@ -69,7 +72,8 @@ public class PostReadController {
 				post.thumbnail(),
 				post.series(),
 				post.featured(),
-				post.rawBody());
+				post.rawBody(),
+				publicAssetUrl.baseUrl(post.slug()));
 	}
 
 	private static List<String> copyTags(List<String> tags) {

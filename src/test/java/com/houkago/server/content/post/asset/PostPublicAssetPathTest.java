@@ -17,6 +17,8 @@ class PostPublicAssetPathTest {
 
 	@Test
 	void encodesSmokePathSegmentsWithoutEncodingDirectorySeparators() {
+		assertThat(PostPublicAssetPath.encodedBasePath("한글 post"))
+				.isEqualTo("/assets/posts/%ED%95%9C%EA%B8%80%20post/");
 		assertThat(PostPublicAssetPath.encodedAssetPath("example-post", "diagram files/한글 image.png"))
 				.isEqualTo("/assets/posts/example-post/diagram%20files/%ED%95%9C%EA%B8%80%20image.png");
 	}
