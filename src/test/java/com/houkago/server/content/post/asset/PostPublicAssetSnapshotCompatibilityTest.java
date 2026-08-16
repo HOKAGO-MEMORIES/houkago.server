@@ -54,8 +54,11 @@ class PostPublicAssetSnapshotCompatibilityTest {
 		assertThat(snapshot.publicPostCount()).isEqualTo(expectedPublicPosts);
 		assertThat(snapshot.assetCount()).isPositive();
 		assertThat(snapshot.totalBytes()).isPositive();
+		assertThat(snapshot.smokeAssetPath()).startsWith("/assets/posts/");
 		assertThat(Files.isSymbolicLink(snapshot.assetRoot().resolve("current"))).isFalse();
 		assertThat(snapshot.releaseDirectory()).isDirectory();
+		new PostPublicAssetSnapshotPublisher().activate(snapshot.assetRoot(), snapshot.generationId());
+		assertThat(Files.isSymbolicLink(snapshot.assetRoot().resolve("current"))).isTrue();
 		System.out.printf(
 				"Public asset compatibility: candidates=%d publicPosts=%d assets=%d bytes=%d%n",
 				candidates.size(),

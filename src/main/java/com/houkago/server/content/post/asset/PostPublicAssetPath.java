@@ -1,7 +1,11 @@
 package com.houkago.server.content.post.asset;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.stream.Collectors;
 
 public final class PostPublicAssetPath {
 
@@ -17,6 +21,15 @@ public final class PostPublicAssetPath {
 	public static String assetPath(String slug, String assetRelativePath) {
 		String normalizedAssetPath = requireRelativeAssetPath(assetRelativePath);
 		return basePath(slug) + normalizedAssetPath;
+	}
+
+	public static String encodedAssetPath(String slug, String assetRelativePath) {
+		String requiredSlug = requirePathSegment("slug", slug);
+		String normalizedAssetPath = requireRelativeAssetPath(assetRelativePath);
+		return PUBLIC_PATH_PREFIX + "/" + encodeSegment(requiredSlug) + "/"
+				+ Arrays.stream(normalizedAssetPath.split("/"))
+						.map(PostPublicAssetPath::encodeSegment)
+						.collect(Collectors.joining("/"));
 	}
 
 	static String requirePathSegment(String field, String value) {
@@ -50,5 +63,9 @@ public final class PostPublicAssetPath {
 			throw new IllegalArgumentException("assetRelativePath is invalid: " + value, exception);
 		}
 		return normalizedValue;
+	}
+
+	private static String encodeSegment(String value) {
+		return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
 	}
 }

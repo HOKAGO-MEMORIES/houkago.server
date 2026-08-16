@@ -39,38 +39,65 @@ public class PostPublicAssetSnapshotRunner implements ApplicationRunner, ExitCod
 	@Override
 	public void run(ApplicationArguments arguments) {
 		String generationId = normalizedGenerationId();
+		String action = normalizedAction();
 		try {
-			Path postsRoot = Path.of(requireText(
-					"houkago.assets.publication.posts-root",
-					properties.getPostsRoot()));
 			Path assetRoot = Path.of(requireText(
 					"houkago.assets.publication.asset-root",
 					properties.getAssetRoot()));
 			String requiredGenerationId = requireText(
 					"houkago.assets.publication.generation-id",
 					properties.getGenerationId());
-			List<ParsedPostCandidate> candidates = candidateLoader.load(postsRoot);
-			List<PostReadModelPreparedCandidate> preparedCandidates = candidatePreflight.prepareAll(candidates);
-			PostPublicAssetSnapshot snapshot = publisher.stage(
-					postsRoot,
-					assetRoot,
-					preparedCandidates,
-					requiredGenerationId);
-			publisher.activate(snapshot);
+			PublicationAction publicationAction = PublicationAction.from(action);
+			if (publicationAction == PublicationAction.ACTIVATE) {
+				activate(assetRoot, requiredGenerationId);
+				return;
+			}
 
-			log.info("event=post_public_asset_snapshot status=SUCCESS generationId={} publicPostCount={} "
-						+ "assetCount={} totalBytes={}",
-					snapshot.generationId(),
-					snapshot.publicPostCount(),
-					snapshot.assetCount(),
-					snapshot.totalBytes());
+			Path postsRoot = Path.of(requireText(
+					"houkago.assets.publication.posts-root",
+					properties.getPostsRoot()));
+			PostPublicAssetSnapshot snapshot = stage(postsRoot, assetRoot, requiredGenerationId);
+			if (publicationAction == PublicationAction.PUBLISH) {
+				activate(assetRoot, requiredGenerationId);
+				log.info("event=post_public_asset_snapshot status=SUCCESS generationId={} publicPostCount={} "
+							+ "assetCount={} totalBytes={}",
+						snapshot.generationId(),
+						snapshot.publicPostCount(),
+						snapshot.assetCount(),
+						snapshot.totalBytes());
+			}
 		} catch (RuntimeException exception) {
 			exitCode = 1;
-			log.error("event=post_public_asset_snapshot status=FAILED generationId={} errorType={}",
+			log.error("event=post_public_asset_snapshot status=FAILED action={} generationId={} errorType={}",
+					action,
 					generationId,
 					exception.getClass().getSimpleName());
 			throw exception;
 		}
+	}
+
+	private PostPublicAssetSnapshot stage(Path postsRoot, Path assetRoot, String generationId) {
+		List<ParsedPostCandidate> candidates = candidateLoader.load(postsRoot);
+		List<PostReadModelPreparedCandidate> preparedCandidates = candidatePreflight.prepareAll(candidates);
+		PostPublicAssetSnapshot snapshot = publisher.stage(
+				postsRoot,
+				assetRoot,
+				preparedCandidates,
+				generationId);
+		log.info("event=post_public_asset_snapshot phase=ASSET_STAGE_SUCCESS status=SUCCESS generationId={} "
+					+ "publicPostCount={} assetCount={} totalBytes={} smokeAssetPath={}",
+				snapshot.generationId(),
+				snapshot.publicPostCount(),
+				snapshot.assetCount(),
+				snapshot.totalBytes(),
+				snapshot.smokeAssetPath() == null ? "NONE" : snapshot.smokeAssetPath());
+		return snapshot;
+	}
+
+	private void activate(Path assetRoot, String generationId) {
+		publisher.activate(assetRoot, generationId);
+		log.info("event=post_public_asset_snapshot phase=ASSET_ACTIVATE_SUCCESS status=SUCCESS generationId={}",
+				generationId);
 	}
 
 	@Override
@@ -83,10 +110,31 @@ public class PostPublicAssetSnapshotRunner implements ApplicationRunner, ExitCod
 		return generationId == null || generationId.isBlank() ? "UNSET" : generationId.trim();
 	}
 
+	private String normalizedAction() {
+		String action = properties.getAction();
+		return action == null || action.isBlank() ? "UNSET" : action.trim().toLowerCase();
+	}
+
 	private static String requireText(String field, String value) {
 		if (value == null || value.isBlank()) {
 			throw new IllegalArgumentException(field + " is required for public asset publication");
 		}
 		return value.trim();
+	}
+
+	private enum PublicationAction {
+		PUBLISH,
+		STAGE,
+		ACTIVATE;
+
+		private static PublicationAction from(String value) {
+			return switch (value) {
+				case "publish" -> PUBLISH;
+				case "stage" -> STAGE;
+				case "activate" -> ACTIVATE;
+				default -> throw new IllegalArgumentException(
+						"houkago.assets.publication.action must be publish, stage, or activate");
+			};
+		}
 	}
 }

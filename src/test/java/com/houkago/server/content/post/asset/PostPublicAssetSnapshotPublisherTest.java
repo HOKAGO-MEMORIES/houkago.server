@@ -47,11 +47,12 @@ class PostPublicAssetSnapshotPublisherTest {
 		assertThat(snapshot.publicPostCount()).isEqualTo(2);
 		assertThat(snapshot.assetCount()).isEqualTo(2);
 		assertThat(snapshot.totalBytes()).isEqualTo(9);
+		assertThat(snapshot.smokeAssetPath()).isEqualTo("/assets/posts/first-post/cover.png");
 		assertThat(snapshot.releaseDirectory().resolve("posts/first-post/cover.png")).hasContent("cover");
 		assertThat(snapshot.releaseDirectory().resolve("posts/first-post/diagrams/flow.png")).hasContent("flow");
 		assertThat(assetRoot.resolve("current")).doesNotExist();
 
-		publisher.activate(snapshot);
+		publisher.activate(assetRoot, "commit-a");
 
 		Path current = assetRoot.resolve("current");
 		assertThat(Files.isSymbolicLink(current)).isTrue();
@@ -143,6 +144,7 @@ class PostPublicAssetSnapshotPublisherTest {
 		PostPublicAssetSnapshot deleted = publisher.stage(postsRoot, assetRoot, List.of(), "commit-d");
 		publisher.activate(deleted);
 		assertThat(assetRoot.resolve("current/posts")).isEmptyDirectory();
+		assertThat(deleted.smokeAssetPath()).isNull();
 	}
 
 	@Test
@@ -200,11 +202,26 @@ class PostPublicAssetSnapshotPublisherTest {
 		PostPublicAssetSnapshot first = publisher.stage(postsRoot, assetRoot, List.of(candidate), "commit-a");
 		PostPublicAssetSnapshot repeated = publisher.stage(postsRoot, assetRoot, List.of(candidate), "commit-a");
 		assertThat(repeated.releaseDirectory()).isEqualTo(first.releaseDirectory());
+		publisher.activate(assetRoot, "commit-a");
+		publisher.activate(assetRoot, "commit-a");
+		assertThat(assetRoot.resolve("current/posts/example-post/image.png")).hasContent("same");
 
 		write(postsRoot.resolve("blog/example-post/assets/image.png"), "different");
 		assertThatThrownBy(() -> publisher.stage(postsRoot, assetRoot, List.of(candidate), "commit-a"))
 				.isInstanceOf(PostPublicAssetPublicationException.class)
 				.hasMessageContaining("different asset bytes");
+	}
+
+	@Test
+	void activationRejectsReleaseWithUnsafeContents() throws IOException {
+		Path assetRoot = assetRoot();
+		Path releasePosts = Files.createDirectories(assetRoot.resolve("releases/commit-a/posts/example-post"));
+		Files.createSymbolicLink(releasePosts.resolve("escape.png"), temporaryDirectory.resolve("outside.png"));
+
+		assertThatThrownBy(() -> publisher.activate(assetRoot, "commit-a"))
+				.isInstanceOf(PostPublicAssetPublicationException.class)
+				.hasMessageContaining("symbolic link");
+		assertThat(assetRoot.resolve("current")).doesNotExist();
 	}
 
 	private void assertPublicationFails(Path postsRoot, String body, String message) {

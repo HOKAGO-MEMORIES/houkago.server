@@ -8,6 +8,7 @@ public class PostPublicAssetSnapshotProperties {
 	private String postsRoot;
 	private String assetRoot;
 	private String generationId;
+	private String action = "publish";
 
 	public String getPostsRoot() {
 		return postsRoot;
@@ -31,5 +32,13 @@ public class PostPublicAssetSnapshotProperties {
 
 	public void setGenerationId(String generationId) {
 		this.generationId = generationId;
+	}
+
+	public String getAction() {
+		return action;
+	}
+
+	public void setAction(String action) {
+		this.action = action;
 	}
 }

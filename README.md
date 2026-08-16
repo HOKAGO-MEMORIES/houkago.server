@@ -103,10 +103,16 @@ docker compose \
   sync
 ```
 
-This stages and validates a published-only full snapshot under `/opt/houkago/assets/releases`, then
-atomically points `/opt/houkago/assets/current` at the selected generation. It does not write the
-database or call frontend revalidation. Automatic Content Worker publication remains a separate
-rollout step.
+The default `publish` action stages and validates a published-only full snapshot under
+`/opt/houkago/assets/releases`, then atomically points `/opt/houkago/assets/current` at the selected
+generation. The runner also accepts `HOUKAGO_ASSET_PUBLICATION_ACTION=stage` and `activate` so the
+Content Worker can keep activation after a successful database sync. Stage never changes `current`;
+activate only accepts an already validated release for the exact generation. Neither action calls
+frontend revalidation by itself.
+
+The repository Worker now uses the exact posts commit SHA as the generation and runs stage, one-shot
+database sync, activation, API/asset smoke, and frontend revalidation in that order. Installing and
+activating this Worker contract in Production remains the Phase 1B-2B rollout step.
 
 Before any row is written, all loaded candidates pass metadata mapping, checksum calculation, and
 duplicate slug/source-path validation. Upserts and retirement still use separate transactions, so

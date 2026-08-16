@@ -26,6 +26,9 @@ readonly MAINTENANCE_LOCK_FILE="${HOUKAGO_MAINTENANCE_LOCK_FILE:-/opt/houkago/lo
 readonly MAINTENANCE_LOCK_TIMEOUT_SECONDS="${HOUKAGO_MAINTENANCE_LOCK_TIMEOUT_SECONDS:-60}"
 readonly PUBLIC_API_BASE_URL="${HOUKAGO_PUBLIC_API_BASE_URL:-https://api.houkago.moe}"
 readonly PUBLIC_DETAIL_SLUG="${HOUKAGO_PUBLIC_DETAIL_SLUG:-boj-2342}"
+readonly PUBLIC_ASSET_ROOT="${HOUKAGO_PUBLIC_ASSET_ROOT:-/opt/houkago/assets}"
+readonly PUBLIC_ASSET_BASE_URL_RAW="${HOUKAGO_PUBLIC_ASSET_BASE_URL:-$PUBLIC_API_BASE_URL}"
+readonly PUBLIC_ASSET_BASE_URL="${PUBLIC_ASSET_BASE_URL_RAW%/}"
 readonly REVALIDATE_URL="${HOUKAGO_REVALIDATE_URL:-}"
 readonly REVALIDATE_SECRET="${HOUKAGO_REVALIDATE_SECRET:-}"
 readonly REVALIDATION_MAX_ATTEMPTS=3
@@ -33,6 +36,10 @@ readonly REVALIDATION_CONNECT_TIMEOUT_SECONDS=5
 readonly REVALIDATION_MAX_TIME_SECONDS=15
 
 failures=0
+ASSET_PUBLIC_POST_COUNT=""
+ASSET_COUNT=""
+ASSET_TOTAL_BYTES=""
+ASSET_SMOKE_PATH=""
 
 log() {
 	printf 'event=houkago_content_sync_worker %s\n' "$*"
@@ -273,6 +280,138 @@ run_one_shot_sync() {
 	return 0
 }
 
+extract_log_field() {
+	local line="$1"
+	local field="$2"
+	printf '%s\n' "$line" | sed -n "s/.* ${field}=\([^ ]*\).*/\1/p"
+}
+
+run_asset_stage() {
+	local delivery_id="$1"
+	local checkout_head="$2"
+	local asset_log stage_status success_line
+
+	asset_log="$(mktemp "${TEMPORARY_DIRECTORY}/asset-stage-${delivery_id}.XXXXXX.log")" || return 1
+	log "phase=asset_stage status=STARTED deliveryId=${delivery_id} commitSha=${checkout_head} generation=${checkout_head}"
+	(
+		cd "$SERVER_ROOT" || exit 1
+		run_compose \
+			--profile sync \
+			run --rm \
+			-e SPRING_PROFILES_ACTIVE=docker,asset-sync \
+			-e HOUKAGO_ASSET_PUBLICATION_ACTION=stage \
+			-e HOUKAGO_ASSET_PUBLICATION_GENERATION_ID="$checkout_head" \
+			sync
+	) 2>&1 | tee "$asset_log"
+	stage_status=${PIPESTATUS[0]}
+
+	success_line="$(grep -F \
+		"phase=ASSET_STAGE_SUCCESS status=SUCCESS generationId=${checkout_head} " \
+		"$asset_log" | tail -n 1)"
+	if [[ "$stage_status" -ne 0 || -z "$success_line" ]]; then
+		rm -f -- "$asset_log"
+		return 1
+	fi
+
+	ASSET_PUBLIC_POST_COUNT="$(extract_log_field "$success_line" "publicPostCount")"
+	ASSET_COUNT="$(extract_log_field "$success_line" "assetCount")"
+	ASSET_TOTAL_BYTES="$(extract_log_field "$success_line" "totalBytes")"
+	ASSET_SMOKE_PATH="$(extract_log_field "$success_line" "smokeAssetPath")"
+	rm -f -- "$asset_log"
+
+	if [[ ! "$ASSET_PUBLIC_POST_COUNT" =~ ^[0-9]+$ \
+			|| ! "$ASSET_COUNT" =~ ^[0-9]+$ \
+			|| ! "$ASSET_TOTAL_BYTES" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+	if [[ "$ASSET_SMOKE_PATH" != "NONE" && "$ASSET_SMOKE_PATH" != /assets/posts/* ]]; then
+		return 1
+	fi
+	if [[ ("$ASSET_COUNT" -eq 0 && "$ASSET_SMOKE_PATH" != "NONE") \
+			|| ("$ASSET_COUNT" -gt 0 && "$ASSET_SMOKE_PATH" == "NONE") ]]; then
+		return 1
+	fi
+
+	log "phase=asset_stage status=SUCCESS deliveryId=${delivery_id} commitSha=${checkout_head} generation=${checkout_head} publicPostCount=${ASSET_PUBLIC_POST_COUNT} assetCount=${ASSET_COUNT} totalBytes=${ASSET_TOTAL_BYTES}"
+	return 0
+}
+
+run_asset_activate() {
+	local delivery_id="$1"
+	local checkout_head="$2"
+	local asset_log activate_status
+
+	asset_log="$(mktemp "${TEMPORARY_DIRECTORY}/asset-activate-${delivery_id}.XXXXXX.log")" || return 1
+	log "phase=asset_activate status=STARTED deliveryId=${delivery_id} commitSha=${checkout_head} generation=${checkout_head}"
+	(
+		cd "$SERVER_ROOT" || exit 1
+		run_compose \
+			--profile sync \
+			run --rm \
+			-e SPRING_PROFILES_ACTIVE=docker,asset-sync \
+			-e HOUKAGO_ASSET_PUBLICATION_ACTION=activate \
+			-e HOUKAGO_ASSET_PUBLICATION_GENERATION_ID="$checkout_head" \
+			sync
+	) 2>&1 | tee "$asset_log"
+	activate_status=${PIPESTATUS[0]}
+
+	if [[ "$activate_status" -ne 0 ]] \
+			|| ! grep -Fq \
+				"phase=ASSET_ACTIVATE_SUCCESS status=SUCCESS generationId=${checkout_head}" \
+				"$asset_log"; then
+		rm -f -- "$asset_log"
+		return 1
+	fi
+
+	rm -f -- "$asset_log"
+	log "phase=asset_activate status=SUCCESS deliveryId=${delivery_id} commitSha=${checkout_head} generation=${checkout_head}"
+	return 0
+}
+
+verify_public_asset() {
+	local delivery_id="$1"
+	local checkout_head="$2"
+	local current_target headers_file http_status curl_status
+
+	if [[ ! -L "${PUBLIC_ASSET_ROOT}/current" ]]; then
+		return 1
+	fi
+	current_target="$(readlink "${PUBLIC_ASSET_ROOT}/current")" || return 1
+	if [[ "$current_target" != "releases/${checkout_head}" ]]; then
+		return 1
+	fi
+	if [[ "$ASSET_SMOKE_PATH" == "NONE" ]]; then
+		log "phase=asset_smoke status=SKIPPED deliveryId=${delivery_id} commitSha=${checkout_head} generation=${checkout_head} reason=no_public_assets"
+		return 0
+	fi
+	if [[ "$PUBLIC_ASSET_BASE_URL" != https://* ]]; then
+		return 1
+	fi
+
+	headers_file="$(mktemp "${TEMPORARY_DIRECTORY}/asset-smoke-${delivery_id}.XXXXXX.headers")" || return 1
+	http_status="$(curl \
+		--silent \
+		--show-error \
+		--output /dev/null \
+		--dump-header "$headers_file" \
+		--write-out '%{http_code}' \
+		--proto '=https' \
+		--connect-timeout 5 \
+		--max-time 15 \
+		"${PUBLIC_ASSET_BASE_URL}${ASSET_SMOKE_PATH}" 2>/dev/null)"
+	curl_status=$?
+	if [[ "$curl_status" -ne 0 || "$http_status" != "200" ]] \
+			|| ! grep -Eiq '^ETag:' "$headers_file" \
+			|| ! grep -Eiq '^Cache-Control:.*max-age=300' "$headers_file"; then
+		rm -f -- "$headers_file"
+		return 1
+	fi
+
+	rm -f -- "$headers_file"
+	log "phase=asset_smoke status=SUCCESS deliveryId=${delivery_id} commitSha=${checkout_head} generation=${checkout_head} assetPath=${ASSET_SMOKE_PATH}"
+	return 0
+}
+
 process_job() {
 	local incoming_path="$1"
 	local validation_output delivery_id commit_sha base_name processing_path
@@ -348,11 +487,11 @@ process_job() {
 		mark_failed "$processing_path" "missing_checkout_head" || true
 		return 1
 	}
-	if ! git -C "$POSTS_ROOT" merge-base --is-ancestor "$current_head" "$origin_main"; then
+	if ! git -C "$POSTS_ROOT" merge-base --is-ancestor "$current_head" "$commit_sha"; then
 		mark_failed "$processing_path" "non_fast_forward" || true
 		return 1
 	fi
-	if ! run_checkout_git merge --ff-only --quiet "$origin_main"; then
+	if ! run_checkout_git merge --ff-only --quiet "$commit_sha"; then
 		mark_failed "$processing_path" "git_merge" || true
 		return 1
 	fi
@@ -360,12 +499,8 @@ process_job() {
 		mark_failed "$processing_path" "checkout_verification" || true
 		return 1
 	}
-	if [[ "$checkout_head" != "$origin_main" ]]; then
-		mark_failed "$processing_path" "checkout_not_at_origin_main" || true
-		return 1
-	fi
-	if ! git -C "$POSTS_ROOT" merge-base --is-ancestor "$commit_sha" "$checkout_head"; then
-		mark_failed "$processing_path" "checkout_missing_job_commit" || true
+	if [[ "$checkout_head" != "$commit_sha" ]]; then
+		mark_failed "$processing_path" "checkout_commit_mismatch" || true
 		return 1
 	fi
 	if ! readability_output="$(verify_checkout_readable 2>&1)"; then
@@ -380,16 +515,28 @@ process_job() {
 		return 1
 	fi
 
+	if ! run_asset_stage "$delivery_id" "$checkout_head"; then
+		mark_failed "$processing_path" "asset_stage" || true
+		return 1
+	fi
 	if ! run_one_shot_sync "$delivery_id" "$checkout_head"; then
 		mark_failed "$processing_path" "one_shot_sync" || true
+		return 1
+	fi
+	if ! run_asset_activate "$delivery_id" "$checkout_head"; then
+		mark_failed "$processing_path" "asset_activation" || true
 		return 1
 	fi
 	if ! verify_public_api; then
 		mark_failed "$processing_path" "public_api_smoke" || true
 		return 1
 	fi
+	if ! verify_public_asset "$delivery_id" "$checkout_head"; then
+		mark_failed "$processing_path" "public_asset_smoke" || true
+		return 1
+	fi
 	if ! revalidate_frontend; then
-		log "phase=frontend_revalidation status=WARNING backendSync=SUCCESS reason=non_fatal"
+		log "phase=frontend_revalidation status=WARNING backendSync=SUCCESS assetPublication=SUCCESS reason=non_fatal"
 	fi
 	if ! move_without_overwrite "$processing_path" "${SUCCEEDED_DIRECTORY}/${base_name}"; then
 		mark_failed "$processing_path" "succeeded_move" || true

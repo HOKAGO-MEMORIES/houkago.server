@@ -16,6 +16,12 @@ class PostPublicAssetPathTest {
 	}
 
 	@Test
+	void encodesSmokePathSegmentsWithoutEncodingDirectorySeparators() {
+		assertThat(PostPublicAssetPath.encodedAssetPath("example-post", "diagram files/한글 image.png"))
+				.isEqualTo("/assets/posts/example-post/diagram%20files/%ED%95%9C%EA%B8%80%20image.png");
+	}
+
+	@Test
 	void rejectsUnsafeSlugAndAssetPath() {
 		assertThatThrownBy(() -> PostPublicAssetPath.basePath("../private"))
 				.isInstanceOf(IllegalArgumentException.class);

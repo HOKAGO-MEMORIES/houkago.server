@@ -58,6 +58,7 @@ public class PostPublicAssetSnapshotPublisher {
 			Path stagingPostsRoot = Files.createDirectory(stagingDirectory.resolve(POSTS_DIRECTORY_NAME));
 			SnapshotStats stats = copyPublicAssets(sourceRoot, stagingPostsRoot, candidates);
 			validateSnapshot(stagingPostsRoot, stats.assetCount(), stats.totalBytes());
+			String smokeAssetPath = findSmokeAssetPath(stagingPostsRoot);
 
 			if (Files.exists(releaseDirectory, LinkOption.NOFOLLOW_LINKS)) {
 				assertEquivalentSnapshots(stagingDirectory, releaseDirectory);
@@ -72,7 +73,8 @@ public class PostPublicAssetSnapshotPublisher {
 					requiredGenerationId,
 					stats.publicPostCount(),
 					stats.assetCount(),
-					stats.totalBytes());
+					stats.totalBytes(),
+					smokeAssetPath);
 		} catch (IOException exception) {
 			deleteTreeQuietly(stagingDirectory, exception);
 			throw new PostPublicAssetPublicationException(
@@ -93,27 +95,59 @@ public class PostPublicAssetSnapshotPublisher {
 		if (!expectedRelease.equals(snapshot.releaseDirectory().toAbsolutePath().normalize())) {
 			throw new IllegalArgumentException("snapshot release does not belong to its asset root");
 		}
-		if (!Files.isDirectory(expectedRelease, LinkOption.NOFOLLOW_LINKS)
-				|| Files.isSymbolicLink(expectedRelease)) {
-			throw new PostPublicAssetPublicationException("Snapshot release is not a safe directory: " + expectedRelease);
+		activate(assetRoot, snapshot.generationId());
+	}
+
+	public void activate(Path assetRoot, String generationId) {
+		String requiredGenerationId = requireGenerationId(generationId);
+		Path publicationRoot = requirePublicationRoot(assetRoot);
+		Path releasesRoot = requireManagedDirectory(
+				publicationRoot.resolve(RELEASES_DIRECTORY_NAME),
+				"releases root");
+		Path expectedRelease = releasesRoot.resolve(requiredGenerationId).normalize();
+		if (!expectedRelease.getParent().equals(releasesRoot)) {
+			throw new IllegalArgumentException("generationId escapes releases root: " + generationId);
+		}
+		requireManagedDirectory(expectedRelease, "snapshot release");
+		Path postsRoot = requireManagedDirectory(expectedRelease.resolve(POSTS_DIRECTORY_NAME), "snapshot posts root");
+		try {
+			measureTree(postsRoot);
+		} catch (IOException exception) {
+			throw new PostPublicAssetPublicationException(
+					"Failed to validate public asset snapshot " + requiredGenerationId,
+					exception);
 		}
 
-		Path currentLink = assetRoot.resolve(CURRENT_LINK_NAME);
+		Path currentLink = publicationRoot.resolve(CURRENT_LINK_NAME);
 		if (Files.exists(currentLink, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(currentLink)) {
 			throw new PostPublicAssetPublicationException("Current snapshot path must be a symbolic link: " + currentLink);
 		}
 
-		Path temporaryLink = assetRoot.resolve(".current-" + UUID.randomUUID());
-		Path relativeTarget = assetRoot.relativize(expectedRelease);
+		Path temporaryLink = publicationRoot.resolve(".current-" + UUID.randomUUID());
+		Path relativeTarget = publicationRoot.relativize(expectedRelease);
 		try {
 			Files.createSymbolicLink(temporaryLink, relativeTarget);
 			moveAtomically(temporaryLink, currentLink, true);
 		} catch (IOException exception) {
 			tryDelete(temporaryLink, exception);
 			throw new PostPublicAssetPublicationException(
-					"Failed to activate public asset snapshot " + snapshot.generationId(),
+					"Failed to activate public asset snapshot " + requiredGenerationId,
 					exception);
 		}
+	}
+
+	private static String findSmokeAssetPath(Path postsRoot) throws IOException {
+		List<Path> assets = regularFilesRelativeTo(postsRoot);
+		if (assets.isEmpty()) {
+			return null;
+		}
+		Path first = assets.getFirst();
+		if (first.getNameCount() < 2) {
+			throw new PostPublicAssetPublicationException("Snapshot asset path is missing its slug boundary: " + first);
+		}
+		String slug = first.getName(0).toString();
+		String relativePath = first.subpath(1, first.getNameCount()).toString().replace('\\', '/');
+		return PostPublicAssetPath.encodedAssetPath(slug, relativePath);
 	}
 
 	private static SnapshotStats copyPublicAssets(
@@ -295,7 +329,10 @@ public class PostPublicAssetSnapshotPublisher {
 
 			@Override
 			public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
-				if (!attributes.isRegularFile() || attributes.isSymbolicLink()) {
+				if (attributes.isSymbolicLink() || Files.isSymbolicLink(file)) {
+					throw new PostPublicAssetPublicationException("Snapshot contains a symbolic link: " + file);
+				}
+				if (!attributes.isRegularFile()) {
 					throw new PostPublicAssetPublicationException("Snapshot contains a non-regular file: " + file);
 				}
 				assetCount[0]++;
@@ -337,7 +374,10 @@ public class PostPublicAssetSnapshotPublisher {
 
 			@Override
 			public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
-				if (!attributes.isRegularFile() || attributes.isSymbolicLink()) {
+				if (attributes.isSymbolicLink() || Files.isSymbolicLink(file)) {
+					throw new PostPublicAssetPublicationException("Snapshot contains a symbolic link: " + file);
+				}
+				if (!attributes.isRegularFile()) {
 					throw new PostPublicAssetPublicationException("Snapshot contains a non-regular file: " + file);
 				}
 				files.add(root.relativize(file));
@@ -392,6 +432,32 @@ public class PostPublicAssetSnapshotPublisher {
 			return directory.toRealPath();
 		} catch (IOException exception) {
 			throw new PostPublicAssetPublicationException("Failed to prepare " + field + " " + directory, exception);
+		}
+	}
+
+	private static Path requirePublicationRoot(Path assetRoot) {
+		Objects.requireNonNull(assetRoot, "assetRoot is required");
+		Path normalizedRoot = assetRoot.toAbsolutePath().normalize();
+		if (Files.isSymbolicLink(normalizedRoot)
+				|| !Files.isDirectory(normalizedRoot, LinkOption.NOFOLLOW_LINKS)) {
+			throw new PostPublicAssetPublicationException("assetRoot must be a real directory: " + assetRoot);
+		}
+		try {
+			return normalizedRoot.toRealPath();
+		} catch (IOException exception) {
+			throw new PostPublicAssetPublicationException("Failed to resolve assetRoot " + assetRoot, exception);
+		}
+	}
+
+	private static Path requireManagedDirectory(Path directory, String field) {
+		if (Files.isSymbolicLink(directory)
+				|| !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+			throw new PostPublicAssetPublicationException(field + " must be a real directory: " + directory);
+		}
+		try {
+			return directory.toRealPath();
+		} catch (IOException exception) {
+			throw new PostPublicAssetPublicationException("Failed to resolve " + field + " " + directory, exception);
 		}
 	}
 

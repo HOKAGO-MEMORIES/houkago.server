@@ -10,6 +10,7 @@ public final class PostPublicAssetSnapshot {
 	private final int publicPostCount;
 	private final long assetCount;
 	private final long totalBytes;
+	private final String smokeAssetPath;
 
 	PostPublicAssetSnapshot(
 			Path assetRoot,
@@ -17,13 +18,15 @@ public final class PostPublicAssetSnapshot {
 			String generationId,
 			int publicPostCount,
 			long assetCount,
-			long totalBytes) {
+			long totalBytes,
+			String smokeAssetPath) {
 		this.assetRoot = assetRoot;
 		this.releaseDirectory = releaseDirectory;
 		this.generationId = generationId;
 		this.publicPostCount = publicPostCount;
 		this.assetCount = assetCount;
 		this.totalBytes = totalBytes;
+		this.smokeAssetPath = smokeAssetPath;
 	}
 
 	public Path assetRoot() {
@@ -48,5 +51,9 @@ public final class PostPublicAssetSnapshot {
 
 	public long totalBytes() {
 		return totalBytes;
+	}
+
+	public String smokeAssetPath() {
+		return smokeAssetPath;
 	}
 }
