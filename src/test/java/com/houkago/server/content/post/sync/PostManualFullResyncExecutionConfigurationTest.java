@@ -29,4 +29,14 @@ class PostManualFullResyncExecutionConfigurationTest {
 					assertThat(context).doesNotHaveBean(PostManualFullResyncRunner.class);
 				});
 	}
+
+	@Test
+	void assetSyncModeRegistersNoResyncRunner() {
+		contextRunner
+				.withPropertyValues("spring.profiles.active=asset-sync")
+				.run(context -> {
+					assertThat(context).doesNotHaveBean(PostOneShotFullResyncRunner.class);
+					assertThat(context).doesNotHaveBean(PostManualFullResyncRunner.class);
+				});
+	}
 }

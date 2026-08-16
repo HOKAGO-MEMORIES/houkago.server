@@ -33,6 +33,11 @@ houkago:
     enabled: ${HOUKAGO_RESYNC_ENABLED:false}
     posts-root: ${HOUKAGO_RESYNC_POSTS_ROOT:}
     commit-hash: ${HOUKAGO_RESYNC_COMMIT_HASH:}
+  assets:
+    publication:
+      posts-root: ${HOUKAGO_ASSET_PUBLICATION_POSTS_ROOT:}
+      asset-root: ${HOUKAGO_ASSET_PUBLICATION_ASSET_ROOT:}
+      generation-id: ${HOUKAGO_ASSET_PUBLICATION_GENERATION_ID:}
   webhook:
     github:
       posts:

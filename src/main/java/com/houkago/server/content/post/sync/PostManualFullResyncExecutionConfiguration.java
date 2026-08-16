@@ -11,7 +11,7 @@ import org.springframework.context.annotation.Profile;
 public class PostManualFullResyncExecutionConfiguration {
 
 	@Bean
-	@Profile("!sync")
+	@Profile("!sync & !asset-sync")
 	PostManualFullResyncRunner postManualFullResyncRunner(
 			PostManualFullResyncService resyncService,
 			PostManualFullResyncProperties properties) {

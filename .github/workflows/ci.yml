@@ -82,6 +82,15 @@ jobs:
           services = json.load(sys.stdin)["services"]
           if services["app"]["image"] != expected or services["sync"]["image"] != expected:
               raise SystemExit("app and sync must resolve to the same immutable image")
+
+          asset_target = "/workspace/public-assets"
+          app_targets = {volume["target"] for volume in services["app"].get("volumes", [])}
+          sync_volumes = services["sync"].get("volumes", [])
+          asset_mounts = [volume for volume in sync_volumes if volume["target"] == asset_target]
+          if asset_target in app_targets:
+              raise SystemExit("app must not mount the public asset root")
+          if len(asset_mounts) != 1 or asset_mounts[0].get("read_only", False):
+              raise SystemExit("sync must mount the public asset root read-write")
           '
 
       - name: Build production Docker image
