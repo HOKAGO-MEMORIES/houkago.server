@@ -23,6 +23,8 @@ import com.houkago.server.content.post.query.PostReadService;
 @Profile("!test")
 public class PostReadController {
 
+	private static final int MAX_SEARCH_QUERY_LENGTH = 100;
+
 	private final PostReadService postReadService;
 	private final PostPublicAssetUrl publicAssetUrl;
 
@@ -37,11 +39,13 @@ public class PostReadController {
 			@RequestParam(required = false) Integer size,
 			@RequestParam(required = false) Boolean featured,
 			@RequestParam(required = false) String category,
-			@RequestParam(required = false) Optional<String> tag) {
+			@RequestParam(required = false) Optional<String> tag,
+			@RequestParam(required = false) Optional<String> q) {
 		if (tag.isPresent() && tag.get().isBlank()) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "tag must not be blank");
 		}
-		return postReadService.findPublicPosts(page, size, featured, category, tag.orElse(null))
+		String searchQuery = normalizeSearchQuery(q);
+		return postReadService.findPublicPosts(page, size, featured, category, tag.orElse(null), searchQuery)
 				.map(PostReadController::toListItemResponse);
 	}
 
@@ -84,5 +88,22 @@ public class PostReadController {
 
 	private static List<String> copyTags(List<String> tags) {
 		return tags == null ? List.of() : List.copyOf(tags);
+	}
+
+	private static String normalizeSearchQuery(Optional<String> query) {
+		if (query.isEmpty()) {
+			return null;
+		}
+
+		String normalized = query.get().trim();
+		if (normalized.isEmpty()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "q must not be blank");
+		}
+		if (normalized.length() > MAX_SEARCH_QUERY_LENGTH) {
+			throw new ResponseStatusException(
+					HttpStatus.BAD_REQUEST,
+					"q must not exceed " + MAX_SEARCH_QUERY_LENGTH + " characters");
+		}
+		return normalized;
 	}
 }

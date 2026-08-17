@@ -1,6 +1,7 @@
 package com.houkago.server.content.post.query;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 import org.springframework.data.domain.Page;
@@ -45,7 +46,8 @@ public class PostReadService {
 			Integer size,
 			Boolean featured,
 			String category,
-			String tag) {
+			String tag,
+			String searchQuery) {
 		Pageable pageable = PageRequest.of(normalizePage(page), normalizeSize(size));
 		return repository.findPublicPostSummaries(
 				PostSourceStatus.PUBLISHED,
@@ -54,6 +56,7 @@ public class PostReadService {
 				featured,
 				category,
 				tag,
+				normalizeSearchTerm(searchQuery),
 				pageable)
 				.map(this::toListItem);
 	}
@@ -127,5 +130,9 @@ public class PostReadService {
 			return DEFAULT_SIZE;
 		}
 		return Math.min(size, MAX_SIZE);
+	}
+
+	private static String normalizeSearchTerm(String searchQuery) {
+		return searchQuery == null ? null : searchQuery.toLowerCase(Locale.ROOT);
 	}
 }

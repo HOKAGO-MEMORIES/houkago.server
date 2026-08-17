@@ -11,7 +11,6 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 
 import com.houkago.server.content.post.policy.PostSourceStatus;
@@ -70,7 +69,6 @@ public class PostReadModel {
 	@Column(name = "source_url", length = 1024)
 	private String sourceUrl;
 
-	@Lob
 	@Column(name = "raw_body", nullable = false, columnDefinition = "longtext")
 	private String rawBody;
 

@@ -105,12 +105,14 @@ class PostReadApiIntegrationTest {
 				Boolean.class,
 				String.class,
 				String.class,
+				String.class,
 				org.springframework.data.domain.Pageable.class);
 		Query query = method.getAnnotation(Query.class);
+		String selectClause = query.value().substring(0, query.value().indexOf("from PostReadModel"));
 
 		assertThat(query).isNotNull();
 		assertThat(query.value()).contains("PostReadSummaryProjection");
-		assertThat(query.value()).doesNotContain("rawBody")
+		assertThat(selectClause).doesNotContain("rawBody")
 				.doesNotContain("raw_body");
 	}
 
@@ -399,6 +401,157 @@ class PostReadApiIntegrationTest {
 		assertThat(restTemplate.getForEntity("/api/posts?tag=", String.class).getStatusCode())
 				.isEqualTo(HttpStatus.BAD_REQUEST);
 		assertThat(restTemplate.getForEntity("/api/posts?tag={tag}", String.class, "   ").getStatusCode())
+					.isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void searchMatchesTitleDescriptionAndRawBodyWithoutReturningRawBody() throws Exception {
+		repository.save(title(publicPost("title-match", LocalDate.of(2026, 7, 6), "ordinary body"),
+				"Unique Telescope Guide"));
+		repository.save(description(publicPost("description-match", LocalDate.of(2026, 7, 5), "ordinary body"),
+				"Unique telescope description"));
+		repository.save(publicPost("body-match", LocalDate.of(2026, 7, 4), "Markdown with unique telescope notes"));
+		repository.save(publicPost("no-match", LocalDate.of(2026, 7, 7), "unrelated body"));
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?q=TELESCOPE&page=0&size=10", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(textValues(root.path("content"), "slug"))
+				.containsExactly("title-match", "description-match", "body-match");
+		assertThat(root.path("totalElements").asInt()).isEqualTo(3);
+		assertThat(response.getBody()).doesNotContain("rawBody")
+				.doesNotContain("unique telescope notes");
+	}
+
+	@Test
+	void searchTreatsPercentUnderscoreAndBackslashAsLiteralCharacters() throws Exception {
+		repository.save(publicPost("percent-match", LocalDate.of(2026, 7, 6), "literal % marker"));
+		repository.save(publicPost("underscore-match", LocalDate.of(2026, 7, 5), "literal _ marker"));
+		repository.save(publicPost("backslash-match", LocalDate.of(2026, 7, 4), "literal \\ marker"));
+		repository.save(publicPost("ordinary", LocalDate.of(2026, 7, 7), "ordinary marker"));
+
+		ResponseEntity<String> percent = restTemplate.getForEntity(
+				"/api/posts?q={q}&page=0&size=10", String.class, "%");
+		ResponseEntity<String> underscore = restTemplate.getForEntity(
+				"/api/posts?q={q}&page=0&size=10", String.class, "_");
+		ResponseEntity<String> backslash = restTemplate.getForEntity(
+				"/api/posts?q={q}&page=0&size=10", String.class, "\\");
+
+		assertThat(textValues(objectMapper.readTree(percent.getBody()).path("content"), "slug"))
+				.containsExactly("percent-match");
+		assertThat(textValues(objectMapper.readTree(underscore.getBody()).path("content"), "slug"))
+				.containsExactly("underscore-match");
+		assertThat(textValues(objectMapper.readTree(backslash.getBody()).path("content"), "slug"))
+				.containsExactly("backslash-match");
+	}
+
+	@Test
+	void searchAppliesPublicVisibilityBeforeTextMatching() throws Exception {
+		repository.save(publicPost("public-search", LocalDate.of(2026, 7, 4), "visibility needle"));
+		repository.save(rawBody(post("draft-search", LocalDate.of(2026, 7, 7), PostSourceStatus.DRAFT,
+				PostSyncStatus.ACTIVE, PostVisibility.PRIVATE), "visibility needle"));
+		repository.save(rawBody(post("private-search", LocalDate.of(2026, 7, 6), PostSourceStatus.PUBLISHED,
+				PostSyncStatus.ACTIVE, PostVisibility.PRIVATE), "visibility needle"));
+		repository.save(rawBody(post("deleted-search", LocalDate.of(2026, 7, 5), PostSourceStatus.PUBLISHED,
+				PostSyncStatus.DELETED, PostVisibility.PRIVATE), "visibility needle"));
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?q={q}&page=0&size=10", String.class, "visibility needle");
+
+		assertThat(textValues(objectMapper.readTree(response.getBody()).path("content"), "slug"))
+				.containsExactly("public-search");
+	}
+
+	@Test
+	void searchCombinesWithCategoryTagAndFeaturedUsingAndSemantics() throws Exception {
+		repository.save(featured(category(tags(publicPost("matching-search", LocalDate.of(2026, 7, 5),
+				"search conjunction"), "backend"), "project")));
+		repository.save(category(tags(publicPost("not-featured-search", LocalDate.of(2026, 7, 6),
+				"search conjunction"), "backend"), "project"));
+		repository.save(featured(category(tags(publicPost("wrong-category-search", LocalDate.of(2026, 7, 7),
+				"search conjunction"), "backend"), "blog")));
+		repository.save(featured(category(tags(publicPost("wrong-tag-search", LocalDate.of(2026, 7, 8),
+				"search conjunction"), "java"), "project")));
+
+		ResponseEntity<String> categoryResponse = restTemplate.getForEntity(
+				"/api/posts?q=conjunction&category=project&page=0&size=10", String.class);
+		ResponseEntity<String> tagResponse = restTemplate.getForEntity(
+				"/api/posts?q=conjunction&tag=backend&page=0&size=10", String.class);
+		ResponseEntity<String> featuredResponse = restTemplate.getForEntity(
+				"/api/posts?q=conjunction&featured=true&page=0&size=10", String.class);
+		ResponseEntity<String> combinedResponse = restTemplate.getForEntity(
+				"/api/posts?q=conjunction&category=project&tag=backend&featured=true&page=0&size=10",
+				String.class);
+
+		assertThat(textValues(objectMapper.readTree(categoryResponse.getBody()).path("content"), "slug"))
+				.containsExactly("wrong-tag-search", "not-featured-search", "matching-search");
+		assertThat(textValues(objectMapper.readTree(tagResponse.getBody()).path("content"), "slug"))
+				.containsExactly("wrong-category-search", "not-featured-search", "matching-search");
+		assertThat(textValues(objectMapper.readTree(featuredResponse.getBody()).path("content"), "slug"))
+				.containsExactly("wrong-tag-search", "wrong-category-search", "matching-search");
+		assertThat(textValues(objectMapper.readTree(combinedResponse.getBody()).path("content"), "slug"))
+				.containsExactly("matching-search");
+	}
+
+	@Test
+	void searchPreservesPaginationCountAndCanonicalOrder() throws Exception {
+		PostReadModel firstSameDate = repository.save(publicPost("search-first",
+				LocalDate.of(2026, 7, 5), "pagination needle"));
+		PostReadModel secondSameDate = repository.save(publicPost("search-second",
+				LocalDate.of(2026, 7, 5), "pagination needle"));
+		repository.save(publicPost("search-older", LocalDate.of(2026, 7, 4), "pagination needle"));
+		assertThat(firstSameDate.getId()).isLessThan(secondSameDate.getId());
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?q=pagination&page=0&size=2", String.class);
+
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(textValues(root.path("content"), "slug"))
+				.containsExactly("search-second", "search-first");
+		assertThat(root.path("totalElements").asInt()).isEqualTo(3);
+		assertThat(root.path("totalPages").asInt()).isEqualTo(2);
+		assertThat(root.path("number").asInt()).isZero();
+		assertThat(root.path("size").asInt()).isEqualTo(2);
+	}
+
+	@Test
+	void searchSupportsKoreanEnglishCaseAndInternalSpaces() throws Exception {
+		repository.save(publicPost("korean-search", LocalDate.of(2026, 7, 5), "다익스트라 최단 경로 정리"));
+		repository.save(publicPost("english-search", LocalDate.of(2026, 7, 4), "Spring Boot deployment"));
+
+		ResponseEntity<String> korean = restTemplate.getForEntity(
+				"/api/posts?q={q}&page=0&size=10", String.class, "최단 경로");
+		ResponseEntity<String> english = restTemplate.getForEntity(
+				"/api/posts?q={q}&page=0&size=10", String.class, "  SPRING BOOT  ");
+
+		assertThat(textValues(objectMapper.readTree(korean.getBody()).path("content"), "slug"))
+				.containsExactly("korean-search");
+		assertThat(textValues(objectMapper.readTree(english.getBody()).path("content"), "slug"))
+				.containsExactly("english-search");
+	}
+
+	@Test
+	void unknownSearchReturnsAnEmptyPage() throws Exception {
+		repository.save(publicPost("known-search", LocalDate.of(2026, 7, 5), "known body"));
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?q=no-such-search-term&page=0&size=10", String.class);
+
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(root.path("content")).isEmpty();
+		assertThat(root.path("totalElements").asInt()).isZero();
+	}
+
+	@Test
+	void blankAndTooLongSearchQueriesReturnBadRequest() {
+		assertThat(restTemplate.getForEntity("/api/posts?q=", String.class).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(restTemplate.getForEntity("/api/posts?q={q}", String.class, "   ").getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(restTemplate.getForEntity("/api/posts?q={q}", String.class, "x".repeat(101)).getStatusCode())
 				.isEqualTo(HttpStatus.BAD_REQUEST);
 	}
 
@@ -509,6 +662,21 @@ class PostReadApiIntegrationTest {
 
 	private static PostReadModel category(PostReadModel post, String category) {
 		post.setCategory(category);
+		return post;
+	}
+
+	private static PostReadModel title(PostReadModel post, String title) {
+		post.setTitle(title);
+		return post;
+	}
+
+	private static PostReadModel description(PostReadModel post, String description) {
+		post.setDescription(description);
+		return post;
+	}
+
+	private static PostReadModel rawBody(PostReadModel post, String rawBody) {
+		post.setRawBody(rawBody);
 		return post;
 	}
 
