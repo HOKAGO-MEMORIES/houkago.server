@@ -103,6 +103,7 @@ class PostReadApiIntegrationTest {
 				PostSyncStatus.class,
 				PostVisibility.class,
 				Boolean.class,
+				String.class,
 				org.springframework.data.domain.Pageable.class);
 		Query query = method.getAnnotation(Query.class);
 
@@ -206,6 +207,100 @@ class PostReadApiIntegrationTest {
 	}
 
 	@Test
+	void categoryReturnsOnlyPublicPublishedActivePostsWithExactCategory() throws Exception {
+		repository.save(category(publicPost("algorithm-public", LocalDate.of(2026, 7, 5), "public body"),
+				"algorithm"));
+		repository.save(category(publicPost("blog-public", LocalDate.of(2026, 7, 6), "blog body"), "blog"));
+		repository.save(category(post("algorithm-draft", LocalDate.of(2026, 7, 6), PostSourceStatus.DRAFT,
+				PostSyncStatus.ACTIVE, PostVisibility.PRIVATE), "algorithm"));
+		repository.save(category(post("algorithm-private", LocalDate.of(2026, 7, 6),
+				PostSourceStatus.PUBLISHED, PostSyncStatus.ACTIVE, PostVisibility.PRIVATE), "algorithm"));
+		repository.save(category(post("algorithm-deleted", LocalDate.of(2026, 7, 6),
+				PostSourceStatus.PUBLISHED, PostSyncStatus.DELETED, PostVisibility.PRIVATE), "algorithm"));
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?category=algorithm&page=0&size=10", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(textValues(root.path("content"), "slug")).containsExactly("algorithm-public");
+		assertThat(root.path("content").get(0).path("category").asText()).isEqualTo("algorithm");
+		assertThat(root.path("totalElements").asInt()).isEqualTo(1);
+	}
+
+	@Test
+	void categoryFilterPreservesOrderingAndFilteredPaginationMetadata() throws Exception {
+		PostReadModel firstSameDate = repository.save(category(publicPost("algorithm-first",
+				LocalDate.of(2026, 7, 5), "first body"), "algorithm"));
+		PostReadModel secondSameDate = repository.save(category(publicPost("algorithm-second",
+				LocalDate.of(2026, 7, 5), "second body"), "algorithm"));
+		repository.save(category(publicPost("algorithm-older", LocalDate.of(2026, 7, 4), "older body"),
+				"algorithm"));
+		repository.save(category(publicPost("blog-newer", LocalDate.of(2026, 7, 6), "blog body"), "blog"));
+		assertThat(firstSameDate.getId()).isLessThan(secondSameDate.getId());
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?category=algorithm&page=0&size=2", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(textValues(root.path("content"), "slug"))
+				.containsExactly("algorithm-second", "algorithm-first");
+		assertThat(root.path("totalElements").asInt()).isEqualTo(3);
+		assertThat(root.path("totalPages").asInt()).isEqualTo(2);
+		assertThat(root.path("number").asInt()).isZero();
+		assertThat(root.path("size").asInt()).isEqualTo(2);
+	}
+
+	@Test
+	void categoryAndFeaturedFiltersUseAndSemantics() throws Exception {
+		repository.save(featured(category(publicPost("algorithm-featured", LocalDate.of(2026, 7, 5),
+				"featured body"), "algorithm")));
+		repository.save(category(publicPost("algorithm-regular", LocalDate.of(2026, 7, 6), "regular body"),
+				"algorithm"));
+		repository.save(featured(category(publicPost("blog-featured", LocalDate.of(2026, 7, 6), "blog body"),
+				"blog")));
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?category=algorithm&featured=true&page=0&size=3", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(textValues(root.path("content"), "slug")).containsExactly("algorithm-featured");
+		assertThat(root.path("totalElements").asInt()).isEqualTo(1);
+	}
+
+	@Test
+	void unknownCategoryReturnsAnEmptyPage() throws Exception {
+		repository.save(category(publicPost("algorithm-public", LocalDate.of(2026, 7, 5), "public body"),
+				"algorithm"));
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?category=unknown&page=0&size=3", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(root.path("content")).isEmpty();
+		assertThat(root.path("totalElements").asInt()).isZero();
+		assertThat(root.path("totalPages").asInt()).isZero();
+	}
+
+	@Test
+	void listCapsRequestedPageSizeAtFifty() throws Exception {
+		for (int index = 0; index < 51; index++) {
+			repository.save(publicPost("max-size-" + index, LocalDate.of(2026, 7, 5), "body " + index));
+		}
+
+		ResponseEntity<String> response = restTemplate.getForEntity("/api/posts?page=0&size=51", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(root.path("content")).hasSize(50);
+		assertThat(root.path("size").asInt()).isEqualTo(50);
+		assertThat(root.path("totalElements").asInt()).isEqualTo(51);
+	}
+
+	@Test
 	void listSortsByPostDateDescThenIdDesc() throws Exception {
 		PostReadModel firstSameDate = repository.save(publicPost("first-same-date",
 				LocalDate.of(2026, 7, 4), "first body"));
@@ -292,6 +387,11 @@ class PostReadApiIntegrationTest {
 
 	private static PostReadModel featured(PostReadModel post) {
 		post.setFeatured(true);
+		return post;
+	}
+
+	private static PostReadModel category(PostReadModel post, String category) {
+		post.setCategory(category);
 		return post;
 	}
 

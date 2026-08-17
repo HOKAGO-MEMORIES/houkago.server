@@ -40,13 +40,18 @@ public class PostReadService {
 	}
 
 	@Transactional(readOnly = true)
-	public Page<PostReadListItem> findPublicPosts(Integer page, Integer size, Boolean featured) {
+	public Page<PostReadListItem> findPublicPosts(
+			Integer page,
+			Integer size,
+			Boolean featured,
+			String category) {
 		Pageable pageable = PageRequest.of(normalizePage(page), normalizeSize(size));
 		return repository.findPublicPostSummaries(
 				PostSourceStatus.PUBLISHED,
 				PostSyncStatus.ACTIVE,
 				PostVisibility.PUBLIC,
 				featured,
+				category,
 				pageable)
 				.map(this::toListItem);
 	}

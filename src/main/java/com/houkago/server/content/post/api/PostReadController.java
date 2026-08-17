@@ -34,8 +34,9 @@ public class PostReadController {
 	public Page<PostListItemResponse> listPosts(
 			@RequestParam(required = false) Integer page,
 			@RequestParam(required = false) Integer size,
-			@RequestParam(required = false) Boolean featured) {
-		return postReadService.findPublicPosts(page, size, featured)
+			@RequestParam(required = false) Boolean featured,
+			@RequestParam(required = false) String category) {
+		return postReadService.findPublicPosts(page, size, featured, category)
 				.map(PostReadController::toListItemResponse);
 	}
 
