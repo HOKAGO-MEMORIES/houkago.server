@@ -104,6 +104,7 @@ class PostReadApiIntegrationTest {
 				PostVisibility.class,
 				Boolean.class,
 				String.class,
+				String.class,
 				org.springframework.data.domain.Pageable.class);
 		Query query = method.getAnnotation(Query.class);
 
@@ -286,6 +287,122 @@ class PostReadApiIntegrationTest {
 	}
 
 	@Test
+	void tagReturnsOnlyExactPublicArrayMembersWithoutPrefixFalsePositives() throws Exception {
+		repository.save(tags(publicPost("graph-post", LocalDate.of(2026, 7, 5), "graph body"), "graph"));
+		repository.save(tags(publicPost("graph-theory-post", LocalDate.of(2026, 7, 6), "theory body"),
+				"graph-theory"));
+		repository.save(tags(publicPost("multi-tag-post", LocalDate.of(2026, 7, 4), "multi body"),
+				"algorithm", "graph"));
+		repository.save(tags(post("private-graph-post", LocalDate.of(2026, 7, 7), PostSourceStatus.PUBLISHED,
+				PostSyncStatus.ACTIVE, PostVisibility.PRIVATE), "graph"));
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?tag=graph&page=0&size=10", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(textValues(root.path("content"), "slug"))
+				.containsExactly("graph-post", "multi-tag-post");
+		assertThat(root.path("totalElements").asInt()).isEqualTo(2);
+		assertThat(response.getBody()).doesNotContain("graph-theory-post")
+				.doesNotContain("private-graph-post")
+				.doesNotContain("rawBody");
+	}
+
+	@Test
+	void tagFilterPreservesOrderingAndFilteredPaginationMetadata() throws Exception {
+		PostReadModel firstSameDate = repository.save(tags(publicPost("tag-first",
+				LocalDate.of(2026, 7, 5), "first body"), "spring"));
+		PostReadModel secondSameDate = repository.save(tags(publicPost("tag-second",
+				LocalDate.of(2026, 7, 5), "second body"), "spring"));
+		repository.save(tags(publicPost("tag-older", LocalDate.of(2026, 7, 4), "older body"), "spring"));
+		repository.save(tags(publicPost("other-newer", LocalDate.of(2026, 7, 6), "other body"), "java"));
+		assertThat(firstSameDate.getId()).isLessThan(secondSameDate.getId());
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?tag=spring&page=0&size=2", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(textValues(root.path("content"), "slug"))
+				.containsExactly("tag-second", "tag-first");
+		assertThat(root.path("totalElements").asInt()).isEqualTo(3);
+		assertThat(root.path("totalPages").asInt()).isEqualTo(2);
+		assertThat(root.path("number").asInt()).isZero();
+		assertThat(root.path("size").asInt()).isEqualTo(2);
+	}
+
+	@Test
+	void tagCombinesWithCategoryAndFeaturedUsingAndSemantics() throws Exception {
+		repository.save(featured(category(tags(publicPost("matching-post", LocalDate.of(2026, 7, 5),
+				"matching body"), "spring"), "project")));
+		repository.save(category(tags(publicPost("not-featured", LocalDate.of(2026, 7, 6),
+				"regular body"), "spring"), "project"));
+		repository.save(featured(category(tags(publicPost("wrong-category", LocalDate.of(2026, 7, 6),
+				"category body"), "spring"), "blog")));
+		repository.save(featured(category(tags(publicPost("wrong-tag", LocalDate.of(2026, 7, 6),
+				"tag body"), "java"), "project")));
+
+		ResponseEntity<String> categoryResponse = restTemplate.getForEntity(
+				"/api/posts?tag=spring&category=project&page=0&size=10", String.class);
+		ResponseEntity<String> featuredResponse = restTemplate.getForEntity(
+				"/api/posts?tag=spring&featured=true&page=0&size=10", String.class);
+		ResponseEntity<String> combinedResponse = restTemplate.getForEntity(
+				"/api/posts?tag=spring&category=project&featured=true&page=0&size=10", String.class);
+
+		assertThat(textValues(objectMapper.readTree(categoryResponse.getBody()).path("content"), "slug"))
+				.containsExactly("not-featured", "matching-post");
+		assertThat(textValues(objectMapper.readTree(featuredResponse.getBody()).path("content"), "slug"))
+				.containsExactly("wrong-category", "matching-post");
+		JsonNode combinedRoot = objectMapper.readTree(combinedResponse.getBody());
+		assertThat(textValues(combinedRoot.path("content"), "slug")).containsExactly("matching-post");
+		assertThat(combinedRoot.path("totalElements").asInt()).isEqualTo(1);
+	}
+
+	@Test
+	void unknownTagReturnsAnEmptyPage() throws Exception {
+		repository.save(tags(publicPost("known-tag-post", LocalDate.of(2026, 7, 5), "body"), "known"));
+
+		ResponseEntity<String> response = restTemplate.getForEntity(
+				"/api/posts?tag=this-tag-does-not-exist&page=0&size=3", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(root.path("content")).isEmpty();
+		assertThat(root.path("totalElements").asInt()).isZero();
+		assertThat(root.path("totalPages").asInt()).isZero();
+	}
+
+	@Test
+	void tagMatchingIsCaseSensitiveAndSupportsUnicode() throws Exception {
+		repository.save(tags(publicPost("lowercase-tag", LocalDate.of(2026, 7, 5), "lower body"), "spring"));
+		repository.save(tags(publicPost("uppercase-tag", LocalDate.of(2026, 7, 6), "upper body"), "Spring"));
+		repository.save(tags(publicPost("unicode-tag", LocalDate.of(2026, 7, 4), "unicode body"), "그래프"));
+
+		ResponseEntity<String> lowercase = restTemplate.getForEntity(
+				"/api/posts?tag=spring&page=0&size=10", String.class);
+		ResponseEntity<String> uppercase = restTemplate.getForEntity(
+				"/api/posts?tag=Spring&page=0&size=10", String.class);
+		ResponseEntity<String> unicode = restTemplate.getForEntity(
+				"/api/posts?tag={tag}&page=0&size=10", String.class, "그래프");
+
+		assertThat(textValues(objectMapper.readTree(lowercase.getBody()).path("content"), "slug"))
+				.containsExactly("lowercase-tag");
+		assertThat(textValues(objectMapper.readTree(uppercase.getBody()).path("content"), "slug"))
+				.containsExactly("uppercase-tag");
+		assertThat(textValues(objectMapper.readTree(unicode.getBody()).path("content"), "slug"))
+				.containsExactly("unicode-tag");
+	}
+
+	@Test
+	void blankTagReturnsBadRequest() {
+		assertThat(restTemplate.getForEntity("/api/posts?tag=", String.class).getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(restTemplate.getForEntity("/api/posts?tag={tag}", String.class, "   ").getStatusCode())
+				.isEqualTo(HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
 	void listCapsRequestedPageSizeAtFifty() throws Exception {
 		for (int index = 0; index < 51; index++) {
 			repository.save(publicPost("max-size-" + index, LocalDate.of(2026, 7, 5), "body " + index));
@@ -392,6 +509,11 @@ class PostReadApiIntegrationTest {
 
 	private static PostReadModel category(PostReadModel post, String category) {
 		post.setCategory(category);
+		return post;
+	}
+
+	private static PostReadModel tags(PostReadModel post, String... tags) throws Exception {
+		post.setTagsJson(new ObjectMapper().writeValueAsString(tags));
 		return post;
 	}
 

@@ -56,6 +56,7 @@ public interface PostReadModelRepository extends JpaRepository<PostReadModel, Lo
 					and p.visibility = :visibility
 					and (:featured is null or p.featured = :featured)
 					and (:category is null or p.category = :category)
+					and (:tag is null or function('json_contains', p.tagsJson, function('json_quote', :tag)) = 1)
 					order by p.postDate desc, p.id desc
 					""",
 			countQuery = """
@@ -66,6 +67,7 @@ public interface PostReadModelRepository extends JpaRepository<PostReadModel, Lo
 					and p.visibility = :visibility
 					and (:featured is null or p.featured = :featured)
 					and (:category is null or p.category = :category)
+					and (:tag is null or function('json_contains', p.tagsJson, function('json_quote', :tag)) = 1)
 					""")
 	Page<PostReadSummaryProjection> findPublicPostSummaries(
 			PostSourceStatus sourceStatus,
@@ -73,6 +75,7 @@ public interface PostReadModelRepository extends JpaRepository<PostReadModel, Lo
 			PostVisibility visibility,
 			Boolean featured,
 			String category,
+			String tag,
 			Pageable pageable);
 
 	@Query("""

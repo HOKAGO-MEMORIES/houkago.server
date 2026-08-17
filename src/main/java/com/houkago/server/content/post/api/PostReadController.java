@@ -1,6 +1,7 @@
 package com.houkago.server.content.post.api;
 
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.domain.Page;
 import org.springframework.context.annotation.Profile;
@@ -35,8 +36,12 @@ public class PostReadController {
 			@RequestParam(required = false) Integer page,
 			@RequestParam(required = false) Integer size,
 			@RequestParam(required = false) Boolean featured,
-			@RequestParam(required = false) String category) {
-		return postReadService.findPublicPosts(page, size, featured, category)
+			@RequestParam(required = false) String category,
+			@RequestParam(required = false) Optional<String> tag) {
+		if (tag.isPresent() && tag.get().isBlank()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "tag must not be blank");
+		}
+		return postReadService.findPublicPosts(page, size, featured, category, tag.orElse(null))
 				.map(PostReadController::toListItemResponse);
 	}
 

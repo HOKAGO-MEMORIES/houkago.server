@@ -44,7 +44,8 @@ public class PostReadService {
 			Integer page,
 			Integer size,
 			Boolean featured,
-			String category) {
+			String category,
+			String tag) {
 		Pageable pageable = PageRequest.of(normalizePage(page), normalizeSize(size));
 		return repository.findPublicPostSummaries(
 				PostSourceStatus.PUBLISHED,
@@ -52,6 +53,7 @@ public class PostReadService {
 				PostVisibility.PUBLIC,
 				featured,
 				category,
+				tag,
 				pageable)
 				.map(this::toListItem);
 	}
