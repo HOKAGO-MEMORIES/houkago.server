@@ -88,8 +88,11 @@ class PostReadModelUpsertServiceIntegrationTest {
 
 	@Test
 	void updatesWhenExistingRowIsFoundBySlugAndSourcePathMoved() {
-		PostReadModel existing = repository.save(samplePost("moved-post", "blog/old-path/index.md"));
-		ParsedPostCandidate candidate = candidate("moved-post", "blog/new-path/index.md", "moved body");
+		ParsedPostCandidate candidate = candidate("moved-post", "blog/new-path/index.md", "same body");
+		PostReadModel existingPost = samplePost("moved-post", "blog/old-path/index.md");
+		existingPost.setRawBody("same body");
+		existingPost.setChecksum(expectedChecksum(candidate));
+		PostReadModel existing = repository.save(existingPost);
 
 		PostReadModelUpsertResult result = upsertService.upsert(candidate, "commit-c", SYNCED_AT);
 
@@ -98,7 +101,31 @@ class PostReadModelUpsertServiceIntegrationTest {
 		assertThat(repository.findBySourcePath("blog/old-path/index.md")).isEmpty();
 		assertThat(repository.findBySourcePath("blog/new-path/index.md")).hasValueSatisfying(post -> {
 			assertThat(post.getSlug()).isEqualTo("moved-post");
-			assertThat(post.getRawBody()).isEqualTo("moved body");
+			assertThat(post.getRawBody()).isEqualTo("same body");
+			assertThat(post.getSyncStatus()).isEqualTo(PostSyncStatus.ACTIVE);
+		});
+	}
+
+	@Test
+	void restoresDeletedRowWhenSameChecksumCandidateReappears() {
+		ParsedPostCandidate candidate = candidate("restored-post", "blog/restored-post/index.md", "same body");
+		String checksum = expectedChecksum(candidate);
+		PostReadModel deletedPost = samplePost("restored-post", "blog/restored-post/index.md");
+		deletedPost.setRawBody("same body");
+		deletedPost.setChecksum(checksum);
+		deletedPost.setSyncStatus(PostSyncStatus.DELETED);
+		deletedPost.setVisibility(PostVisibility.PRIVATE);
+		repository.save(deletedPost);
+
+		PostReadModelUpsertResult result = upsertService.upsert(candidate, "commit-restore", SYNCED_AT);
+
+		assertThat(result.status()).isEqualTo(PostReadModelUpsertStatus.UPDATED);
+		assertThat(repository.findBySlug("restored-post")).hasValueSatisfying(post -> {
+			assertThat(post.getChecksum()).isEqualTo(checksum);
+			assertThat(post.getSourceStatus()).isEqualTo(PostSourceStatus.PUBLISHED);
+			assertThat(post.getSyncStatus()).isEqualTo(PostSyncStatus.ACTIVE);
+			assertThat(post.getVisibility()).isEqualTo(PostVisibility.PUBLIC);
+			assertThat(post.getCommitHash()).isEqualTo("commit-restore");
 		});
 	}
 

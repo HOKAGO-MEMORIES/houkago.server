@@ -50,6 +50,45 @@ class PostReadModelUpsertServiceTest {
 		verify(repository).save(existing);
 	}
 
+	@Test
+	void sameChecksumWithMovedSourcePathUsesFullUpdate() {
+		ParsedPostCandidate candidate = candidate();
+		PostReadModel existing = existingPost("checksum-a");
+		existing.setSourcePath("blog/old-path/index.md");
+		PostReadModelPreparedCandidate preparedCandidate = preparedCandidate("checksum-a");
+		when(repository.findBySourcePath(candidate.sourcePath())).thenReturn(Optional.empty());
+		when(repository.findBySlug(candidate.metadataInput().slug())).thenReturn(Optional.of(existing));
+		when(processor.prepare(candidate)).thenReturn(preparedCandidate);
+		when(processor.update(existing, preparedCandidate, COMMIT_HASH, SYNCED_AT)).thenReturn(existing);
+		when(repository.save(existing)).thenReturn(existing);
+
+		PostReadModelUpsertResult result = service.upsert(candidate, COMMIT_HASH, SYNCED_AT);
+
+		assertThat(result.status()).isEqualTo(PostReadModelUpsertStatus.UPDATED);
+		verify(processor).update(existing, preparedCandidate, COMMIT_HASH, SYNCED_AT);
+		verify(processor, never()).touch(existing, COMMIT_HASH, SYNCED_AT);
+	}
+
+	@Test
+	void sameChecksumWithDifferentLifecycleUsesFullUpdate() {
+		ParsedPostCandidate candidate = candidate();
+		PostReadModel existing = existingPost("checksum-a");
+		existing.setSyncStatus(PostSyncStatus.DELETED);
+		existing.setVisibility(PostVisibility.PRIVATE);
+		PostReadModelPreparedCandidate preparedCandidate = preparedCandidate("checksum-a");
+		when(repository.findBySourcePath(candidate.sourcePath())).thenReturn(Optional.of(existing));
+		when(repository.findBySlug(candidate.metadataInput().slug())).thenReturn(Optional.of(existing));
+		when(processor.prepare(candidate)).thenReturn(preparedCandidate);
+		when(processor.update(existing, preparedCandidate, COMMIT_HASH, SYNCED_AT)).thenReturn(existing);
+		when(repository.save(existing)).thenReturn(existing);
+
+		PostReadModelUpsertResult result = service.upsert(candidate, COMMIT_HASH, SYNCED_AT);
+
+		assertThat(result.status()).isEqualTo(PostReadModelUpsertStatus.UPDATED);
+		verify(processor).update(existing, preparedCandidate, COMMIT_HASH, SYNCED_AT);
+		verify(processor, never()).touch(existing, COMMIT_HASH, SYNCED_AT);
+	}
+
 	private static ParsedPostCandidate candidate() {
 		return new ParsedPostCandidate(
 				"blog/touched-post/index.md",
@@ -75,6 +114,9 @@ class PostReadModelUpsertServiceTest {
 		post.setSlug("touched-post");
 		post.setSourcePath("blog/touched-post/index.md");
 		post.setChecksum(checksum);
+		post.setSourceStatus(PostSourceStatus.PUBLISHED);
+		post.setSyncStatus(PostSyncStatus.ACTIVE);
+		post.setVisibility(PostVisibility.PUBLIC);
 		return post;
 	}
 

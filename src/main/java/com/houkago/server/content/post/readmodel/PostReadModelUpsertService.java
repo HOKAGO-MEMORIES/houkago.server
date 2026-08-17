@@ -81,10 +81,19 @@ public class PostReadModelUpsertService {
 		if (existing.isEmpty()) {
 			return PostReadModelUpsertStatus.CREATED;
 		}
-		if (Objects.equals(existing.get().getChecksum(), candidate.checksum())) {
-			return PostReadModelUpsertStatus.TOUCHED;
-		}
-		return PostReadModelUpsertStatus.UPDATED;
+		return requiresReadModelUpdate(existing.get(), candidate)
+				? PostReadModelUpsertStatus.UPDATED
+				: PostReadModelUpsertStatus.TOUCHED;
+	}
+
+	private static boolean requiresReadModelUpdate(
+			PostReadModel existing,
+			PostReadModelPreparedCandidate candidate) {
+		return !Objects.equals(existing.getChecksum(), candidate.checksum())
+				|| !Objects.equals(existing.getSourcePath(), candidate.sourcePath())
+				|| existing.getSourceStatus() != candidate.metadata().sourceStatus()
+				|| existing.getSyncStatus() != candidate.metadata().syncStatus()
+				|| existing.getVisibility() != candidate.metadata().visibility();
 	}
 
 	private static String requireText(String field, String value) {
