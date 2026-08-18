@@ -21,10 +21,12 @@ import com.houkago.server.content.post.checksum.PostChecksumCalculator;
 import com.houkago.server.content.post.metadata.InvalidPostMetadataException;
 import com.houkago.server.content.post.metadata.PostMetadataInput;
 import com.houkago.server.content.post.metadata.PostMetadataMapper;
+import com.houkago.server.content.post.metadata.PostMetadataMapping;
 import com.houkago.server.content.post.policy.PostSourceStatus;
 import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
 import com.houkago.server.content.post.source.ParsedPostCandidate;
+import com.houkago.server.content.post.source.PostSourceLayoutValidator;
 
 @Testcontainers
 @DataJpaTest(properties = {
@@ -34,6 +36,7 @@ import com.houkago.server.content.post.source.ParsedPostCandidate;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
 		PostMetadataMapper.class,
+		PostSourceLayoutValidator.class,
 		PostChecksumCalculator.class,
 		PostReadModelAssembler.class,
 		PostReadModelCandidateProcessor.class,
@@ -74,7 +77,7 @@ class PostReadModelUpsertServiceIntegrationTest {
 		PostReadModel existing = repository.save(samplePost("old-slug", "blog/source-path-post/index.md"));
 		ParsedPostCandidate candidate = candidate("new-slug", "blog/source-path-post/index.md", "new body");
 
-		PostReadModelUpsertResult result = upsertService.upsert(candidate, "commit-b",
+		PostReadModelUpsertResult result = upsertService.upsertPreparedCandidate(preparedCandidate(candidate), "commit-b",
 				Instant.parse("2026-07-04T01:00:00Z"));
 
 		assertThat(result.status()).isEqualTo(PostReadModelUpsertStatus.UPDATED);
@@ -94,7 +97,10 @@ class PostReadModelUpsertServiceIntegrationTest {
 		existingPost.setChecksum(expectedChecksum(candidate));
 		PostReadModel existing = repository.save(existingPost);
 
-		PostReadModelUpsertResult result = upsertService.upsert(candidate, "commit-c", SYNCED_AT);
+		PostReadModelUpsertResult result = upsertService.upsertPreparedCandidate(
+				preparedCandidate(candidate),
+				"commit-c",
+				SYNCED_AT);
 
 		assertThat(result.status()).isEqualTo(PostReadModelUpsertStatus.UPDATED);
 		assertThat(result.post().getId()).isEqualTo(existing.getId());
@@ -177,13 +183,13 @@ class PostReadModelUpsertServiceIntegrationTest {
 
 	@Test
 	void conflictWhenSourcePathAndSlugPointToDifferentRows() {
-		PostReadModel sourcePathRow = repository.save(samplePost("source-path-row", "blog/conflict-source/index.md"));
-		PostReadModel slugRow = repository.save(samplePost("conflict-slug", "blog/conflict-slug/index.md"));
-		ParsedPostCandidate candidate = candidate("conflict-slug", "blog/conflict-source/index.md", "body");
+		PostReadModel sourcePathRow = repository.save(samplePost("source-path-row", "blog/conflict-slug/index.md"));
+		PostReadModel slugRow = repository.save(samplePost("conflict-slug", "blog/old-conflict-path/index.md"));
+		ParsedPostCandidate candidate = candidate("conflict-slug", "blog/conflict-slug/index.md", "body");
 
 		assertThatThrownBy(() -> upsertService.upsert(candidate, "commit-e", SYNCED_AT))
 				.isInstanceOf(PostReadModelUpsertConflictException.class)
-				.hasMessageContaining("blog/conflict-source/index.md")
+				.hasMessageContaining("blog/conflict-slug/index.md")
 				.hasMessageContaining("conflict-slug")
 				.hasMessageContaining(String.valueOf(sourcePathRow.getId()))
 				.hasMessageContaining(String.valueOf(slugRow.getId()));
@@ -270,6 +276,19 @@ class PostReadModelUpsertServiceIntegrationTest {
 				com.houkago.server.content.post.checksum.PostChecksumInput.from(
 						metadataMapper.map(candidate.metadataInput()),
 						candidate.rawBody()));
+	}
+
+	private static PostReadModelPreparedCandidate preparedCandidate(ParsedPostCandidate candidate) {
+		PostMetadataMapper metadataMapper = new PostMetadataMapper();
+		PostMetadataMapping metadata = metadataMapper.map(candidate.metadataInput());
+		return new PostReadModelPreparedCandidate(
+				metadata,
+				candidate.rawBody(),
+				candidate.sourcePath(),
+				new PostChecksumCalculator().calculate(
+						com.houkago.server.content.post.checksum.PostChecksumInput.from(
+								metadata,
+								candidate.rawBody())));
 	}
 
 	private static PostReadModel samplePost(String slug, String sourcePath) {

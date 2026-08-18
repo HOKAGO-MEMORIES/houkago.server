@@ -1,6 +1,7 @@
 package com.houkago.server.content.post.sync;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -25,6 +26,7 @@ import com.houkago.server.content.post.policy.PostSourceStatus;
 import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
 import com.houkago.server.content.post.readmodel.PostReadModelRepository;
+import com.houkago.server.content.post.source.InvalidPostSourceLayoutException;
 
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
@@ -61,27 +63,27 @@ class PostManualFullResyncServiceIntegrationTest {
 	}
 
 	@Test
-	void sameChecksumRelocationUpdatesPathAndSurvivesRetirement() throws IOException {
-		Path original = writePost("blog/original-path/index.md", "relocated-post", "Unchanged body.\n");
+	void invalidLastCandidateFailsBeforeAnyUpsertOrRetirement() throws IOException {
+		Path keeper = writePost("blog/keeper-post/index.md", "keeper-post", "Keeper body.\n");
+		resyncService.resync(postsRoot, "commit-initial", FIRST_SYNCED_AT);
+		Files.delete(keeper);
+		writePost("blog/a-valid/index.md", "a-valid", "First valid body.\n");
+		writePost("blog/b-valid/index.md", "b-valid", "Second valid body.\n");
+		writePost("project/z-invalid/index.md", "z-invalid", "Invalid category path body.\n");
 
-		PostManualFullResyncResult initial = resyncService.resync(postsRoot, "commit-initial", FIRST_SYNCED_AT);
-		String initialChecksum = repository.findBySlug("relocated-post").orElseThrow().getChecksum();
-		Path relocated = postsRoot.resolve("blog/relocated-path/index.md");
-		Files.createDirectories(relocated.getParent());
-		Files.move(original, relocated);
+		assertThatThrownBy(() -> resyncService.resync(postsRoot, "commit-invalid", SECOND_SYNCED_AT))
+				.isInstanceOf(InvalidPostSourceLayoutException.class)
+				.hasMessageContaining("sourcePath=project/z-invalid/index.md")
+				.hasMessageContaining("invariant=category_path_match");
 
-		PostManualFullResyncResult result = resyncService.resync(postsRoot, "commit-relocated", SECOND_SYNCED_AT);
-
-		assertThat(initial.createdCount()).isEqualTo(1);
-		assertThat(result.updatedCount()).isEqualTo(1);
-		assertThat(result.touchedCount()).isZero();
-		assertThat(result.deletedCount()).isZero();
-		assertThat(repository.findBySourcePath("blog/original-path/index.md")).isEmpty();
-		assertThat(repository.findBySlug("relocated-post")).hasValueSatisfying(post -> {
-			assertThat(post.getSourcePath()).isEqualTo("blog/relocated-path/index.md");
-			assertThat(post.getChecksum()).isEqualTo(initialChecksum);
+		assertThat(repository.findBySlug("a-valid")).isEmpty();
+		assertThat(repository.findBySlug("b-valid")).isEmpty();
+		assertThat(repository.count()).isEqualTo(1);
+		assertThat(repository.findBySlug("keeper-post")).hasValueSatisfying(post -> {
 			assertThat(post.getSyncStatus()).isEqualTo(PostSyncStatus.ACTIVE);
 			assertThat(post.getVisibility()).isEqualTo(PostVisibility.PUBLIC);
+			assertThat(post.getCommitHash()).isEqualTo("commit-initial");
+			assertThat(post.getSyncedAt()).isEqualTo(FIRST_SYNCED_AT);
 		});
 	}
 

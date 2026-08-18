@@ -20,6 +20,7 @@ import com.houkago.server.content.post.source.ParsedPostCandidate;
 import com.houkago.server.content.post.source.PostMarkdownParser;
 import com.houkago.server.content.post.source.PostSourceCandidateLoader;
 import com.houkago.server.content.post.source.PostSourceFileReader;
+import com.houkago.server.content.post.source.PostSourceLayoutValidator;
 import com.houkago.server.content.post.source.PostSourceScanner;
 
 class PostPublicAssetSnapshotCompatibilityTest {
@@ -36,6 +37,7 @@ class PostPublicAssetSnapshotCompatibilityTest {
 				new PostSourceFileReader(new PostMarkdownParser()));
 		PostReadModelCandidateProcessor processor = new PostReadModelCandidateProcessor(
 				new PostMetadataMapper(),
+				new PostSourceLayoutValidator(),
 				new PostChecksumCalculator(),
 				new PostReadModelAssembler());
 		PostReadModelCandidatePreflight preflight = new PostReadModelCandidatePreflight(processor);

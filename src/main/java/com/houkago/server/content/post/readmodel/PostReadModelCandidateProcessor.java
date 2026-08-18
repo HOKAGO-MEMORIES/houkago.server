@@ -10,27 +10,37 @@ import com.houkago.server.content.post.checksum.PostChecksumInput;
 import com.houkago.server.content.post.metadata.PostMetadataMapper;
 import com.houkago.server.content.post.metadata.PostMetadataMapping;
 import com.houkago.server.content.post.source.ParsedPostCandidate;
+import com.houkago.server.content.post.source.PostSourceLayoutValidator;
 
 @Component
 public class PostReadModelCandidateProcessor {
 
 	private final PostMetadataMapper metadataMapper;
+	private final PostSourceLayoutValidator sourceLayoutValidator;
 	private final PostChecksumCalculator checksumCalculator;
 	private final PostReadModelAssembler assembler;
 
 	public PostReadModelCandidateProcessor(
 			PostMetadataMapper metadataMapper,
+			PostSourceLayoutValidator sourceLayoutValidator,
 			PostChecksumCalculator checksumCalculator,
 			PostReadModelAssembler assembler) {
 		this.metadataMapper = Objects.requireNonNull(metadataMapper, "metadataMapper is required");
+		this.sourceLayoutValidator = Objects.requireNonNull(sourceLayoutValidator, "sourceLayoutValidator is required");
 		this.checksumCalculator = Objects.requireNonNull(checksumCalculator, "checksumCalculator is required");
 		this.assembler = Objects.requireNonNull(assembler, "assembler is required");
 	}
 
 	public PostReadModelPreparedCandidate prepare(ParsedPostCandidate candidate) {
 		Objects.requireNonNull(candidate, "candidate is required");
-
 		PostMetadataMapping metadata = metadataMapper.map(candidate.metadataInput());
+		sourceLayoutValidator.validate(candidate.sourcePath(), metadata);
+		return prepare(candidate, metadata);
+	}
+
+	private PostReadModelPreparedCandidate prepare(ParsedPostCandidate candidate, PostMetadataMapping metadata) {
+		Objects.requireNonNull(candidate, "candidate is required");
+		Objects.requireNonNull(metadata, "metadata is required");
 		String checksum = checksumCalculator.calculate(PostChecksumInput.from(metadata, candidate.rawBody()));
 		return new PostReadModelPreparedCandidate(
 				metadata,

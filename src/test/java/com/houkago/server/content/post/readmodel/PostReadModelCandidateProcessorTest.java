@@ -2,6 +2,10 @@ package com.houkago.server.content.post.readmodel;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -19,16 +23,19 @@ import com.houkago.server.content.post.policy.PostSourceStatus;
 import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
 import com.houkago.server.content.post.source.ParsedPostCandidate;
+import com.houkago.server.content.post.source.PostSourceLayoutValidator;
 
 class PostReadModelCandidateProcessorTest {
 
 	private static final Instant SYNCED_AT = Instant.parse("2026-07-03T00:00:00Z");
 
 	private final PostMetadataMapper metadataMapper = new PostMetadataMapper();
+	private final PostSourceLayoutValidator sourceLayoutValidator = new PostSourceLayoutValidator();
 	private final PostChecksumCalculator checksumCalculator = new PostChecksumCalculator();
 	private final PostReadModelAssembler assembler = new PostReadModelAssembler();
 	private final PostReadModelCandidateProcessor processor = new PostReadModelCandidateProcessor(
 			metadataMapper,
+			sourceLayoutValidator,
 			checksumCalculator,
 			assembler);
 
@@ -168,6 +175,28 @@ class PostReadModelCandidateProcessorTest {
 		assertThatThrownBy(() -> processor.create(candidate, "commit-a", SYNCED_AT))
 				.isInstanceOf(InvalidPostMetadataException.class)
 				.hasMessageContaining("title is required");
+	}
+
+	@Test
+	void layoutFailureStopsBeforeChecksumAndAssembly() {
+		PostMetadataMapper mapper = mock(PostMetadataMapper.class);
+		PostSourceLayoutValidator layoutValidator = mock(PostSourceLayoutValidator.class);
+		PostChecksumCalculator calculator = mock(PostChecksumCalculator.class);
+		PostReadModelAssembler readModelAssembler = mock(PostReadModelAssembler.class);
+		PostReadModelCandidateProcessor candidateProcessor = new PostReadModelCandidateProcessor(
+				mapper,
+				layoutValidator,
+				calculator,
+				readModelAssembler);
+		ParsedPostCandidate candidate = publishedCandidate();
+		PostMetadataMapping metadata = metadataMapper.map(candidate.metadataInput());
+		RuntimeException exception = new RuntimeException("layout invalid");
+		when(mapper.map(candidate.metadataInput())).thenReturn(metadata);
+		doThrow(exception).when(layoutValidator).validate(candidate.sourcePath(), metadata);
+
+		assertThatThrownBy(() -> candidateProcessor.prepare(candidate)).isSameAs(exception);
+
+		verifyNoInteractions(calculator, readModelAssembler);
 	}
 
 	private String expectedChecksum(ParsedPostCandidate candidate) {
