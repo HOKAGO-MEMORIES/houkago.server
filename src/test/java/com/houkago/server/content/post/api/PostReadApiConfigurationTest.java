@@ -80,26 +80,28 @@ class PostReadApiConfigurationTest {
 	@Test
 	void nonWebSyncModeDoesNotRequirePublicOrigin() {
 		new ApplicationContextRunner()
-				.withUserConfiguration(PostReadApiConfiguration.class)
+				.withUserConfiguration(PostReadApiConfiguration.class, PostReadController.class)
 				.withPropertyValues(
 						"spring.profiles.active=docker,sync",
 						"houkago.assets.public-origin=")
 				.run(context -> {
 					assertThat(context).hasNotFailed();
 					assertThat(context).doesNotHaveBean(PostPublicAssetUrl.class);
+					assertThat(context).doesNotHaveBean(PostReadController.class);
 				});
 	}
 
 	@Test
 	void nonWebAssetSyncModeDoesNotRequirePublicOrigin() {
 		new ApplicationContextRunner()
-				.withUserConfiguration(PostReadApiConfiguration.class)
+				.withUserConfiguration(PostReadApiConfiguration.class, PostReadController.class)
 				.withPropertyValues(
 						"spring.profiles.active=docker,asset-sync",
 						"houkago.assets.public-origin=")
 				.run(context -> {
 					assertThat(context).hasNotFailed();
 					assertThat(context).doesNotHaveBean(PostPublicAssetUrl.class);
+					assertThat(context).doesNotHaveBean(PostReadController.class);
 				});
 	}
 }
