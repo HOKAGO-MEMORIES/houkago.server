@@ -63,6 +63,20 @@ jobs:
             "HOUKAGO_SERVER_SCHEMA_COMPATIBILITY=unchanged" \
             > "$release_env"
 
+          if env -u HOUKAGO_PUBLIC_ASSET_ORIGIN -u HOUKAGO_SERVER_IMAGE docker compose \
+            --env-file "$server_env" \
+            --env-file "$release_env" \
+            --profile sync \
+            -f compose.prod.yml \
+            config --quiet >/dev/null 2>&1; then
+            echo "Production Compose must reject a missing public asset origin." >&2
+            exit 1
+          fi
+
+          printf '%s\n' \
+            "HOUKAGO_PUBLIC_ASSET_ORIGIN=https://api.example.test" \
+            >> "$server_env"
+
           env -u HOUKAGO_SERVER_IMAGE docker compose \
             --env-file "$server_env" \
             --env-file "$release_env" \
