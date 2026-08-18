@@ -3,11 +3,13 @@ package com.houkago.server.content.post.readmodel;
 import java.time.Instant;
 import java.util.Objects;
 
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 
 @Component
+@Profile("!asset-sync")
 public class PostReadModelCandidateProcessor {
 
 	private final PostReadModelAssembler assembler;

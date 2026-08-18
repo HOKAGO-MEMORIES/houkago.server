@@ -5,8 +5,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 
-@Configuration
-@Profile("!test")
+@Configuration(proxyBeanMethods = false)
+@Profile("!test & !asset-sync")
 @EnableConfigurationProperties(PostManualFullResyncProperties.class)
 public class PostManualFullResyncExecutionConfiguration {
 

@@ -19,11 +19,13 @@ import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 
 @Component
+@Profile("asset-sync")
 public class PostPublicAssetSnapshotPublisher {
 
 	private static final String ASSETS_DIRECTORY_NAME = "assets";

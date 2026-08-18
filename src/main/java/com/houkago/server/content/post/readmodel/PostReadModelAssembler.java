@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import com.houkago.server.content.post.metadata.PostMetadataMapping;
@@ -12,6 +13,7 @@ import com.houkago.server.content.post.policy.PostVisibility;
 import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 
 @Component
+@Profile("!asset-sync")
 public class PostReadModelAssembler {
 
 	public PostReadModel create(
