@@ -15,6 +15,8 @@ readonly COMPOSE_FILE_FIXTURE="${SERVER_ROOT_FIXTURE}/compose.prod.yml"
 readonly SERVER_ENV_FIXTURE="${TEMPORARY_ROOT}/server.env"
 readonly WORKER_ENV_FIXTURE="${TEMPORARY_ROOT}/content-sync-worker.env"
 readonly ASSET_ROOT_FIXTURE="${TEMPORARY_ROOT}/assets"
+readonly MAINTENANCE_LOCK_FIXTURE="${TEMPORARY_ROOT}/backend-maintenance.lock"
+readonly FAKE_BIN_FIXTURE="${TEMPORARY_ROOT}/fake-bin"
 readonly SHA="2222222222222222222222222222222222222222"
 readonly OLD_SHA="1111111111111111111111111111111111111111"
 readonly NEWER_SHA="3333333333333333333333333333333333333333"
@@ -78,8 +80,46 @@ initialize_spool_fixture() {
 	: > "$SERVER_ENV_FIXTURE"
 }
 
+initialize_flock_fixture() {
+	mkdir -p "$FAKE_BIN_FIXTURE"
+	cat > "${FAKE_BIN_FIXTURE}/flock" <<'PY'
+#!/usr/bin/env python3
+import fcntl
+import sys
+import time
+
+arguments = sys.argv[1:]
+nonblocking = False
+timeout = None
+while arguments and arguments[0].startswith("-"):
+    option = arguments.pop(0)
+    if option == "-n":
+        nonblocking = True
+    elif option == "-w" and arguments:
+        timeout = float(arguments.pop(0))
+    else:
+        raise SystemExit(2)
+
+if len(arguments) != 1:
+    raise SystemExit(2)
+descriptor = int(arguments[0])
+deadline = None if timeout is None else time.monotonic() + timeout
+while True:
+    try:
+        flags = fcntl.LOCK_EX | (fcntl.LOCK_NB if nonblocking or timeout is not None else 0)
+        fcntl.flock(descriptor, flags)
+        raise SystemExit(0)
+    except BlockingIOError:
+        if nonblocking or (deadline is not None and time.monotonic() >= deadline):
+            raise SystemExit(1)
+        time.sleep(0.01)
+PY
+	chmod 0755 "${FAKE_BIN_FIXTURE}/flock"
+}
+
 initialize_git_fixture
 initialize_spool_fixture
+initialize_flock_fixture
 
 export HOUKAGO_SYNC_SPOOL_ROOT="$SPOOL_ROOT_FIXTURE"
 export HOUKAGO_POSTS_ROOT="$CHECKOUT_REPOSITORY"
@@ -91,6 +131,8 @@ export HOUKAGO_REVALIDATE_URL="https://frontend.example.invalid/api/internal/rev
 export HOUKAGO_REVALIDATE_SECRET="synthetic-worker-secret"
 export HOUKAGO_PUBLIC_ASSET_ROOT="$ASSET_ROOT_FIXTURE"
 export HOUKAGO_PUBLIC_ASSET_BASE_URL="https://backend.example.invalid"
+export HOUKAGO_MAINTENANCE_LOCK_FILE="$MAINTENANCE_LOCK_FIXTURE"
+export PATH="${FAKE_BIN_FIXTURE}:$PATH"
 
 # shellcheck source=houkago-content-sync-worker
 source "$WORKER_SCRIPT"
@@ -150,6 +192,167 @@ reset_spool_files() {
 		rm -f -- "${SPOOL_ROOT}/${directory}"/*
 	done
 }
+
+write_valid_job() {
+	local path="$1"
+	local delivery_id="$2"
+	local commit_sha="${3:-$SHA}"
+
+	printf '{"deliveryId":"%s","commitSha":"%s","receivedAt":"2026-08-18T00:00:00Z"}\n' \
+		"$delivery_id" "$commit_sha" > "$path"
+	chmod 0640 "$path"
+}
+
+test_signal_requeues_processing_job_and_releases_lock() (
+	local signal_name="$1"
+	local expected_exit_code="$2"
+	local delivery_id="$3"
+	local runner="${TEMPORARY_ROOT}/signal-${signal_name}-worker-runner"
+	local marker="${TEMPORARY_ROOT}/signal-${signal_name}-worker-started"
+	local output="${TEMPORARY_ROOT}/signal-${signal_name}-worker-output"
+	local status=0
+
+	reset_spool_files
+	write_valid_job "${INCOMING_DIRECTORY}/${delivery_id}.json" "$delivery_id"
+	cat > "$runner" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+source "$WORKER_SCRIPT_UNDER_TEST"
+git() {
+	if [[ "$*" == *"status --porcelain"* ]]; then
+		: > "$SIGNAL_MARKER"
+		kill "-${TEST_SIGNAL}" "$$"
+		return 1
+	fi
+	return 1
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+dispatch
+EOF
+	chmod 0755 "$runner"
+
+	set +e
+	WORKER_SCRIPT_UNDER_TEST="$WORKER_SCRIPT" SIGNAL_MARKER="$marker" \
+		TEST_SIGNAL="$signal_name" \
+		bash "$runner" > "$output" 2>&1
+	status=$?
+	set -e
+
+	assert_equals "$expected_exit_code" "$status" "${signal_name} exit code"
+	assert_file "$marker"
+	assert_file "${INCOMING_DIRECTORY}/${delivery_id}.json"
+	[[ ! -e "${PROCESSING_DIRECTORY}/${delivery_id}.json" ]] \
+		|| fail "${signal_name} left the job in processing"
+	[[ ! -e "${SUCCEEDED_DIRECTORY}/${delivery_id}.json" ]] \
+		|| fail "${signal_name} incorrectly completed the job"
+	[[ ! -e "${FAILED_DIRECTORY}/${delivery_id}.json" ]] \
+		|| fail "${signal_name} incorrectly failed the job"
+	grep -Fq 'trigger=signal_cleanup' "$output" \
+		|| fail "${signal_name} cleanup did not log its recovery trigger"
+
+	exec 7>"$LOCK_FILE"
+	flock -n 7 || fail "content lock remained held after ${signal_name}"
+	exec 7>&-
+)
+
+mock_successful_pipeline() {
+	git() {
+		case "$*" in
+			*"status --porcelain"*) return 0 ;;
+			*"branch --show-current"*) printf 'main\n' ;;
+			*"fetch --quiet origin main"*) return 0 ;;
+			*"cat-file -e"*) return 0 ;;
+			*"rev-parse refs/remotes/origin/main"*) printf '%s\n' "$SHA" ;;
+			*"rev-parse HEAD"*) printf '%s\n' "$SHA" ;;
+			*"merge-base --is-ancestor"*) return 0 ;;
+			*"merge --ff-only --quiet"*) return 0 ;;
+			*) fail "unexpected recovery git invocation: $*" ;;
+		esac
+	}
+	verify_checkout_readable() { return 0; }
+	run_asset_stage() {
+		ASSET_PUBLIC_POST_COUNT=1
+		ASSET_COUNT=1
+		ASSET_TOTAL_BYTES=10
+		ASSET_SMOKE_PATH=/assets/posts/example-post/image.png
+		return 0
+	}
+	run_one_shot_sync() { return 0; }
+	run_asset_activate() { return 0; }
+	verify_public_api() { return 0; }
+	verify_public_asset() { return 0; }
+	revalidate_frontend() { return 0; }
+}
+
+test_startup_recovers_orphan_and_completes_pipeline() (
+	local delivery_id="17171717-1717-4717-8717-171717171717"
+	local output
+
+	reset_spool_files
+	write_valid_job "${PROCESSING_DIRECTORY}/${delivery_id}.json" "$delivery_id"
+	failures=0
+	mock_successful_pipeline
+
+	output="$(main)" || fail "startup orphan recovery did not complete"
+	assert_file "${SUCCEEDED_DIRECTORY}/${delivery_id}.json"
+	[[ ! -e "${PROCESSING_DIRECTORY}/${delivery_id}.json" ]] \
+		|| fail "startup recovery left the orphan in processing"
+	[[ ! -e "${INCOMING_DIRECTORY}/${delivery_id}.json" ]] \
+		|| fail "startup recovery left the requeued job in incoming"
+	[[ "$output" == *"trigger=startup"* && "$output" == *"status=SUCCESS"* ]] \
+		|| fail "startup recovery did not log requeue and success"
+)
+
+test_startup_collision_preserves_jobs_without_overwrite() (
+	local delivery_id="18181818-1818-4818-8818-181818181818"
+	local pipeline_calls="${TEMPORARY_ROOT}/collision-pipeline-calls"
+	local collision_archive output status=0
+
+	reset_spool_files
+	write_valid_job "${PROCESSING_DIRECTORY}/${delivery_id}.json" "$delivery_id"
+	write_valid_job "${INCOMING_DIRECTORY}/${delivery_id}.json" "$delivery_id"
+	: > "$pipeline_calls"
+	failures=0
+	mock_successful_pipeline
+	run_one_shot_sync() { printf 'x' >> "$pipeline_calls"; return 0; }
+
+	output="$(main)" || status=$?
+	[[ "$status" -ne 0 ]] || fail "orphan collision must make the worker result fail closed"
+	assert_file "${SUCCEEDED_DIRECTORY}/${delivery_id}.json"
+	assert_equals "1" "$(wc -c < "$pipeline_calls" | tr -d ' ')" \
+		"collision pipeline execution count"
+	collision_archive="$(find "$FAILED_DIRECTORY" -maxdepth 1 -type f \
+		-name "${delivery_id}.recovery-collision-*.json" -print -quit)"
+	assert_file "$collision_archive"
+	[[ ! -e "${PROCESSING_DIRECTORY}/${delivery_id}.json" ]] \
+		|| fail "collision left a processing orphan"
+	[[ ! -e "${INCOMING_DIRECTORY}/${delivery_id}.json" ]] \
+		|| fail "collision left the canonical incoming job"
+	[[ "$output" == *"reason=duplicate_state"* && "$output" == *"collisionState=incoming"* ]] \
+		|| fail "collision state was not reported"
+)
+
+test_busy_content_lock_defers_orphan_recovery() (
+	local delivery_id="19191919-1919-4919-8919-191919191919"
+	local output
+
+	reset_spool_files
+	write_valid_job "${PROCESSING_DIRECTORY}/${delivery_id}.json" "$delivery_id"
+	failures=0
+	exec 7>"$LOCK_FILE"
+	flock -n 7 || fail "could not prepare content lock fixture"
+	output="$(main)" || fail "busy content lock should queue without failure"
+	exec 7>&-
+
+	assert_file "${PROCESSING_DIRECTORY}/${delivery_id}.json"
+	[[ "$output" == *"status=QUEUED reason=content_lock_busy"* ]] \
+		|| fail "busy content lock did not report queued state"
+	[[ "$output" != *"phase=orphan_recovery"* ]] \
+		|| fail "orphan recovery ran before worker exclusivity"
+)
 
 test_process_failure_case() (
 	local scenario="$1"
@@ -662,6 +865,15 @@ test_activation_failure_operator_retry_recovers() (
 
 test_checkout_umask_scope
 test_readability_guard_uses_sync_service
+test_signal_requeues_processing_job_and_releases_lock \
+	"TERM" "143" "16161616-1616-4616-8616-161616161616"
+test_signal_requeues_processing_job_and_releases_lock \
+	"INT" "130" "20202020-2020-4020-8020-202020202020"
+test_signal_requeues_processing_job_and_releases_lock \
+	"HUP" "129" "21212121-2121-4121-8121-212121212121"
+test_startup_recovers_orphan_and_completes_pipeline
+test_startup_collision_preserves_jobs_without_overwrite
+test_busy_content_lock_defers_orphan_recovery
 test_process_failure_case "dirty" "11111111-1111-4111-8111-111111111111"
 test_process_failure_case "unknown" "22222222-2222-4222-8222-222222222222"
 test_process_failure_case "nonff" "33333333-3333-4333-8333-333333333333"

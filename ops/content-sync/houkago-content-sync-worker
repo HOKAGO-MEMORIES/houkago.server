@@ -36,6 +36,8 @@ readonly REVALIDATION_CONNECT_TIMEOUT_SECONDS=5
 readonly REVALIDATION_MAX_TIME_SECONDS=15
 
 failures=0
+current_processing_path=""
+cleanup_started=false
 ASSET_PUBLIC_POST_COUNT=""
 ASSET_COUNT=""
 ASSET_TOTAL_BYTES=""
@@ -86,8 +88,96 @@ mark_failed() {
 		log "status=FAILED reason=failed_state_move job=${base_name}"
 		return 1
 	fi
+	if [[ "$current_processing_path" == "$source_path" ]]; then
+		current_processing_path=""
+	fi
 	log "status=FAILED reason=${reason} job=${base_name}"
 	return 0
+}
+
+archive_recovery_collision() {
+	local processing_path="$1"
+	local collision_state="$2"
+	local base_name timestamp target_path
+
+	base_name="$(basename -- "$processing_path")"
+	timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+	target_path="${FAILED_DIRECTORY}/${base_name%.json}.recovery-collision-${timestamp}-$$.json"
+	if ! move_without_overwrite "$processing_path" "$target_path"; then
+		log "phase=orphan_recovery status=FAILED reason=collision_archive_failed collisionState=${collision_state} job=${base_name}"
+		return 1
+	fi
+	if [[ "$current_processing_path" == "$processing_path" ]]; then
+		current_processing_path=""
+	fi
+	log "phase=orphan_recovery status=FAILED reason=duplicate_state collisionState=${collision_state} job=${base_name}"
+	return 0
+}
+
+recover_processing_job() {
+	local processing_path="$1"
+	local trigger="$2"
+	local validation_output delivery_id base_name incoming_path state_directory state
+
+	base_name="$(basename -- "$processing_path")"
+	if [[ ! -f "$processing_path" || -L "$processing_path" ]]; then
+		mark_failed "$processing_path" "orphan_invalid_job_file" || true
+		return 1
+	fi
+	if ! validation_output="$(validate_job "$processing_path" 2>/dev/null)"; then
+		mark_failed "$processing_path" "orphan_invalid_job" || true
+		return 1
+	fi
+	delivery_id="$(printf '%s\n' "$validation_output" | sed -n '1p')"
+
+	for state in succeeded failed incoming; do
+		case "$state" in
+			succeeded) state_directory="$SUCCEEDED_DIRECTORY" ;;
+			failed) state_directory="$FAILED_DIRECTORY" ;;
+			incoming) state_directory="$INCOMING_DIRECTORY" ;;
+		esac
+		if [[ -e "${state_directory}/${base_name}" ]]; then
+			archive_recovery_collision "$processing_path" "$state" || true
+			return 1
+		fi
+	done
+
+	incoming_path="${INCOMING_DIRECTORY}/${base_name}"
+	if ! move_without_overwrite "$processing_path" "$incoming_path"; then
+		mark_failed "$processing_path" "orphan_requeue_failed" || true
+		return 1
+	fi
+	if [[ "$current_processing_path" == "$processing_path" ]]; then
+		current_processing_path=""
+	fi
+	log "phase=orphan_recovery status=REQUEUED trigger=${trigger} deliveryId=${delivery_id} job=${base_name}"
+	return 0
+}
+
+recover_orphaned_jobs() {
+	local orphan_path
+
+	shopt -s nullglob
+	set -- "${PROCESSING_DIRECTORY}"/*.json
+	shopt -u nullglob
+	for orphan_path in "$@"; do
+		if ! recover_processing_job "$orphan_path" "startup"; then
+			failures=$((failures + 1))
+		fi
+	done
+}
+
+cleanup() {
+	local original_exit_code=$?
+
+	if [[ "$cleanup_started" == "true" ]]; then
+		return "$original_exit_code"
+	fi
+	cleanup_started=true
+	if [[ -n "$current_processing_path" && -e "$current_processing_path" ]]; then
+		recover_processing_job "$current_processing_path" "signal_cleanup" || true
+	fi
+	return "$original_exit_code"
 }
 
 validate_job() {
@@ -442,6 +532,7 @@ process_job() {
 		mark_failed "$incoming_path" "processing_move" || true
 		return 1
 	fi
+	current_processing_path="$processing_path"
 
 	if ! git_status="$(git -C "$POSTS_ROOT" status --porcelain --untracked-files=normal)"; then
 		mark_failed "$processing_path" "git_status" || true
@@ -542,6 +633,7 @@ process_job() {
 		mark_failed "$processing_path" "succeeded_move" || true
 		return 1
 	fi
+	current_processing_path=""
 
 	log "status=SUCCESS deliveryId=${delivery_id} commitSha=${checkout_head}"
 	return 0
@@ -600,7 +692,7 @@ retry_failed_job() {
 }
 
 main() {
-	local jobs job_path
+	local job_path
 
 	for directory in "$INCOMING_DIRECTORY" "$PROCESSING_DIRECTORY" "$SUCCEEDED_DIRECTORY" \
 			"$FAILED_DIRECTORY" "$TEMPORARY_DIRECTORY"; do
@@ -627,13 +719,15 @@ main() {
 		return 0
 	fi
 
+	recover_orphaned_jobs
+
 	while true; do
 		shopt -s nullglob
-		jobs=("${INCOMING_DIRECTORY}"/*.json)
+		set -- "${INCOMING_DIRECTORY}"/*.json
 		shopt -u nullglob
-		[[ ${#jobs[@]} -gt 0 ]] || break
+		[[ $# -gt 0 ]] || break
 
-		for job_path in "${jobs[@]}"; do
+		for job_path in "$@"; do
 			if ! process_job "$job_path"; then
 				failures=$((failures + 1))
 			fi
@@ -673,5 +767,9 @@ dispatch() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	trap cleanup EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+	trap 'exit 129' HUP
 	dispatch "$@"
 fi
