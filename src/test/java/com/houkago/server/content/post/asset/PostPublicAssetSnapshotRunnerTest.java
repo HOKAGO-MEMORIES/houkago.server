@@ -19,8 +19,8 @@ import org.mockito.InOrder;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 
-import com.houkago.server.content.post.readmodel.PostReadModelCandidatePreflight;
-import com.houkago.server.content.post.readmodel.PostReadModelPreparedCandidate;
+import com.houkago.server.content.post.preparation.PostCandidatePreflight;
+import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 import com.houkago.server.content.post.source.ParsedPostCandidate;
 import com.houkago.server.content.post.source.PostSourceCandidateLoader;
 
@@ -33,7 +33,7 @@ class PostPublicAssetSnapshotRunnerTest {
 	private static final String SMOKE_ASSET_PATH = "/assets/posts/example-post/cover.png";
 
 	private final PostSourceCandidateLoader candidateLoader = mock(PostSourceCandidateLoader.class);
-	private final PostReadModelCandidatePreflight candidatePreflight = mock(PostReadModelCandidatePreflight.class);
+	private final PostCandidatePreflight candidatePreflight = mock(PostCandidatePreflight.class);
 	private final PostPublicAssetSnapshotPublisher publisher = mock(PostPublicAssetSnapshotPublisher.class);
 	private final PostPublicAssetSnapshotProperties properties = properties();
 	private final PostPublicAssetSnapshotRunner runner = new PostPublicAssetSnapshotRunner(
@@ -45,7 +45,7 @@ class PostPublicAssetSnapshotRunnerTest {
 	@Test
 	void stagesThenActivatesSnapshotAndLogsSummary(CapturedOutput output) {
 		List<ParsedPostCandidate> candidates = List.of(mock(ParsedPostCandidate.class));
-		List<PostReadModelPreparedCandidate> preparedCandidates = List.of(mock(PostReadModelPreparedCandidate.class));
+		List<PreparedPostCandidate> preparedCandidates = List.of(mock(PreparedPostCandidate.class));
 		PostPublicAssetSnapshot snapshot = new PostPublicAssetSnapshot(
 				ASSET_ROOT,
 				ASSET_ROOT.resolve("releases").resolve(GENERATION_ID),
@@ -80,7 +80,7 @@ class PostPublicAssetSnapshotRunnerTest {
 	void stageActionDoesNotActivateCurrent(CapturedOutput output) {
 		properties.setAction("stage");
 		List<ParsedPostCandidate> candidates = List.of(mock(ParsedPostCandidate.class));
-		List<PostReadModelPreparedCandidate> preparedCandidates = List.of(mock(PostReadModelPreparedCandidate.class));
+		List<PreparedPostCandidate> preparedCandidates = List.of(mock(PreparedPostCandidate.class));
 		PostPublicAssetSnapshot snapshot = new PostPublicAssetSnapshot(
 				ASSET_ROOT,
 				ASSET_ROOT.resolve("releases").resolve(GENERATION_ID),
@@ -118,7 +118,7 @@ class PostPublicAssetSnapshotRunnerTest {
 	@Test
 	void stageFailurePropagatesWithoutActivation(CapturedOutput output) {
 		List<ParsedPostCandidate> candidates = List.of(mock(ParsedPostCandidate.class));
-		List<PostReadModelPreparedCandidate> preparedCandidates = List.of(mock(PostReadModelPreparedCandidate.class));
+		List<PreparedPostCandidate> preparedCandidates = List.of(mock(PreparedPostCandidate.class));
 		PostPublicAssetPublicationException exception = new PostPublicAssetPublicationException("copy failed");
 		when(candidateLoader.load(POSTS_ROOT)).thenReturn(candidates);
 		when(candidatePreflight.prepareAll(candidates)).thenReturn(preparedCandidates);

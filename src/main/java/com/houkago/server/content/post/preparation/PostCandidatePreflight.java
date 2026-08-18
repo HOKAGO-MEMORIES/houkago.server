@@ -1,4 +1,4 @@
-package com.houkago.server.content.post.readmodel;
+package com.houkago.server.content.post.preparation;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -11,23 +11,23 @@ import org.springframework.stereotype.Component;
 import com.houkago.server.content.post.source.ParsedPostCandidate;
 
 @Component
-public class PostReadModelCandidatePreflight {
+public class PostCandidatePreflight {
 
-	private final PostReadModelCandidateProcessor processor;
+	private final PostCandidatePreparer preparer;
 
-	public PostReadModelCandidatePreflight(PostReadModelCandidateProcessor processor) {
-		this.processor = Objects.requireNonNull(processor, "processor is required");
+	public PostCandidatePreflight(PostCandidatePreparer preparer) {
+		this.preparer = Objects.requireNonNull(preparer, "preparer is required");
 	}
 
-	public List<PostReadModelPreparedCandidate> prepareAll(List<ParsedPostCandidate> candidates) {
+	public List<PreparedPostCandidate> prepareAll(List<ParsedPostCandidate> candidates) {
 		Objects.requireNonNull(candidates, "candidates are required");
 
-		List<PostReadModelPreparedCandidate> preparedCandidates = new ArrayList<>(candidates.size());
+		List<PreparedPostCandidate> preparedCandidates = new ArrayList<>(candidates.size());
 		Set<String> sourcePaths = new HashSet<>();
 		Set<String> slugs = new HashSet<>();
 
 		for (ParsedPostCandidate candidate : candidates) {
-			PostReadModelPreparedCandidate preparedCandidate = processor.prepare(candidate);
+			PreparedPostCandidate preparedCandidate = preparer.prepare(candidate);
 			requireUnique("sourcePath", preparedCandidate.sourcePath(), sourcePaths);
 			requireUnique("slug", preparedCandidate.metadata().slug(), slugs);
 			preparedCandidates.add(preparedCandidate);

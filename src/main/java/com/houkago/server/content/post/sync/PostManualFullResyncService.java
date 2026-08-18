@@ -6,8 +6,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
-import com.houkago.server.content.post.readmodel.PostReadModelCandidatePreflight;
-import com.houkago.server.content.post.readmodel.PostReadModelPreparedCandidate;
+import com.houkago.server.content.post.preparation.PostCandidatePreflight;
+import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 import com.houkago.server.content.post.readmodel.PostReadModelRetirementService;
 import com.houkago.server.content.post.readmodel.PostReadModelUpsertResult;
 import com.houkago.server.content.post.readmodel.PostReadModelUpsertService;
@@ -18,13 +18,13 @@ import com.houkago.server.content.post.source.PostSourceCandidateLoader;
 public class PostManualFullResyncService {
 
 	private final PostSourceCandidateLoader candidateLoader;
-	private final PostReadModelCandidatePreflight candidatePreflight;
+	private final PostCandidatePreflight candidatePreflight;
 	private final PostReadModelUpsertService upsertService;
 	private final PostReadModelRetirementService retirementService;
 
 	public PostManualFullResyncService(
 			PostSourceCandidateLoader candidateLoader,
-			PostReadModelCandidatePreflight candidatePreflight,
+			PostCandidatePreflight candidatePreflight,
 			PostReadModelUpsertService upsertService,
 			PostReadModelRetirementService retirementService) {
 		this.candidateLoader = Objects.requireNonNull(candidateLoader, "candidateLoader is required");
@@ -39,12 +39,12 @@ public class PostManualFullResyncService {
 		Objects.requireNonNull(syncedAt, "syncedAt is required");
 
 		List<ParsedPostCandidate> candidates = candidateLoader.load(postsRoot);
-		List<PostReadModelPreparedCandidate> preparedCandidates = candidatePreflight.prepareAll(candidates);
+		List<PreparedPostCandidate> preparedCandidates = candidatePreflight.prepareAll(candidates);
 		int createdCount = 0;
 		int updatedCount = 0;
 		int touchedCount = 0;
 
-		for (PostReadModelPreparedCandidate candidate : preparedCandidates) {
+		for (PreparedPostCandidate candidate : preparedCandidates) {
 			PostReadModelUpsertResult result = upsertService.upsertPreparedCandidate(
 					candidate,
 					requiredCommitHash,
@@ -59,7 +59,7 @@ public class PostManualFullResyncService {
 		}
 
 		Set<String> currentSourcePaths = preparedCandidates.stream()
-				.map(PostReadModelPreparedCandidate::sourcePath)
+				.map(PreparedPostCandidate::sourcePath)
 				.collect(java.util.stream.Collectors.toUnmodifiableSet());
 		int deletedCount = currentSourcePaths.isEmpty()
 				? 0

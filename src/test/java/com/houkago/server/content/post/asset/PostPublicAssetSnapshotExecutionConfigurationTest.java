@@ -6,7 +6,7 @@ import static org.mockito.Mockito.mock;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
-import com.houkago.server.content.post.readmodel.PostReadModelCandidatePreflight;
+import com.houkago.server.content.post.preparation.PostCandidatePreflight;
 import com.houkago.server.content.post.source.PostSourceCandidateLoader;
 
 class PostPublicAssetSnapshotExecutionConfigurationTest {
@@ -14,7 +14,7 @@ class PostPublicAssetSnapshotExecutionConfigurationTest {
 	private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
 			.withUserConfiguration(PostPublicAssetSnapshotExecutionConfiguration.class)
 			.withBean(PostSourceCandidateLoader.class, () -> mock(PostSourceCandidateLoader.class))
-			.withBean(PostReadModelCandidatePreflight.class, () -> mock(PostReadModelCandidatePreflight.class))
+			.withBean(PostCandidatePreflight.class, () -> mock(PostCandidatePreflight.class))
 			.withBean(PostPublicAssetSnapshotPublisher.class, () -> mock(PostPublicAssetSnapshotPublisher.class));
 
 	@Test

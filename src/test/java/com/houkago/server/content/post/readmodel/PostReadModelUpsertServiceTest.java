@@ -18,6 +18,8 @@ import com.houkago.server.content.post.metadata.PostMetadataMapping;
 import com.houkago.server.content.post.policy.PostSourceStatus;
 import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
+import com.houkago.server.content.post.preparation.PostCandidatePreparer;
+import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 import com.houkago.server.content.post.source.ParsedPostCandidate;
 
 class PostReadModelUpsertServiceTest {
@@ -26,24 +28,25 @@ class PostReadModelUpsertServiceTest {
 	private static final Instant SYNCED_AT = Instant.parse("2026-07-04T00:00:00Z");
 
 	private final PostReadModelRepository repository = mock(PostReadModelRepository.class);
+	private final PostCandidatePreparer preparer = mock(PostCandidatePreparer.class);
 	private final PostReadModelCandidateProcessor processor = mock(PostReadModelCandidateProcessor.class);
-	private final PostReadModelUpsertService service = new PostReadModelUpsertService(repository, processor);
+	private final PostReadModelUpsertService service = new PostReadModelUpsertService(repository, preparer, processor);
 
 	@Test
 	void sameChecksumTouchesExistingRowWithoutFullUpdate() {
 		ParsedPostCandidate candidate = candidate();
 		PostReadModel existing = existingPost("checksum-a");
-		PostReadModelPreparedCandidate preparedCandidate = preparedCandidate("checksum-a");
+		PreparedPostCandidate preparedCandidate = preparedCandidate("checksum-a");
 		when(repository.findBySourcePath(candidate.sourcePath())).thenReturn(Optional.of(existing));
 		when(repository.findBySlug(candidate.metadataInput().slug())).thenReturn(Optional.of(existing));
-		when(processor.prepare(candidate)).thenReturn(preparedCandidate);
+		when(preparer.prepare(candidate)).thenReturn(preparedCandidate);
 		when(processor.touch(existing, COMMIT_HASH, SYNCED_AT)).thenReturn(existing);
 		when(repository.save(existing)).thenReturn(existing);
 
 		PostReadModelUpsertResult result = service.upsert(candidate, COMMIT_HASH, SYNCED_AT);
 
 		assertThat(result.status()).isEqualTo(PostReadModelUpsertStatus.TOUCHED);
-		verify(processor).prepare(candidate);
+		verify(preparer).prepare(candidate);
 		verify(processor).touch(existing, COMMIT_HASH, SYNCED_AT);
 		verify(processor, never()).update(existing, preparedCandidate, COMMIT_HASH, SYNCED_AT);
 		verify(processor, never()).create(preparedCandidate, COMMIT_HASH, SYNCED_AT);
@@ -55,10 +58,10 @@ class PostReadModelUpsertServiceTest {
 		ParsedPostCandidate candidate = candidate();
 		PostReadModel existing = existingPost("checksum-a");
 		existing.setSourcePath("blog/old-path/index.md");
-		PostReadModelPreparedCandidate preparedCandidate = preparedCandidate("checksum-a");
+		PreparedPostCandidate preparedCandidate = preparedCandidate("checksum-a");
 		when(repository.findBySourcePath(candidate.sourcePath())).thenReturn(Optional.empty());
 		when(repository.findBySlug(candidate.metadataInput().slug())).thenReturn(Optional.of(existing));
-		when(processor.prepare(candidate)).thenReturn(preparedCandidate);
+		when(preparer.prepare(candidate)).thenReturn(preparedCandidate);
 		when(processor.update(existing, preparedCandidate, COMMIT_HASH, SYNCED_AT)).thenReturn(existing);
 		when(repository.save(existing)).thenReturn(existing);
 
@@ -75,10 +78,10 @@ class PostReadModelUpsertServiceTest {
 		PostReadModel existing = existingPost("checksum-a");
 		existing.setSyncStatus(PostSyncStatus.DELETED);
 		existing.setVisibility(PostVisibility.PRIVATE);
-		PostReadModelPreparedCandidate preparedCandidate = preparedCandidate("checksum-a");
+		PreparedPostCandidate preparedCandidate = preparedCandidate("checksum-a");
 		when(repository.findBySourcePath(candidate.sourcePath())).thenReturn(Optional.of(existing));
 		when(repository.findBySlug(candidate.metadataInput().slug())).thenReturn(Optional.of(existing));
-		when(processor.prepare(candidate)).thenReturn(preparedCandidate);
+		when(preparer.prepare(candidate)).thenReturn(preparedCandidate);
 		when(processor.update(existing, preparedCandidate, COMMIT_HASH, SYNCED_AT)).thenReturn(existing);
 		when(repository.save(existing)).thenReturn(existing);
 
@@ -120,8 +123,8 @@ class PostReadModelUpsertServiceTest {
 		return post;
 	}
 
-	private static PostReadModelPreparedCandidate preparedCandidate(String checksum) {
-		return new PostReadModelPreparedCandidate(
+	private static PreparedPostCandidate preparedCandidate(String checksum) {
+		return new PreparedPostCandidate(
 				new PostMetadataMapping(
 						"Post touched-post",
 						"touched-post",

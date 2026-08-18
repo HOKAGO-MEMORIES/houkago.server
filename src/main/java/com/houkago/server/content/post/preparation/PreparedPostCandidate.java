@@ -1,16 +1,16 @@
-package com.houkago.server.content.post.readmodel;
+package com.houkago.server.content.post.preparation;
 
 import java.util.Objects;
 
 import com.houkago.server.content.post.metadata.PostMetadataMapping;
 
-public record PostReadModelPreparedCandidate(
+public record PreparedPostCandidate(
 		PostMetadataMapping metadata,
 		String rawBody,
 		String sourcePath,
 		String checksum) {
 
-	public PostReadModelPreparedCandidate {
+	public PreparedPostCandidate {
 		Objects.requireNonNull(metadata, "metadata is required");
 		Objects.requireNonNull(rawBody, "rawBody is required");
 		requireText("sourcePath", sourcePath);

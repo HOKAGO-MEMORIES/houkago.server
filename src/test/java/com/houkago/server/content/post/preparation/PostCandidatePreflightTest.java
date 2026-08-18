@@ -1,4 +1,4 @@
-package com.houkago.server.content.post.readmodel;
+package com.houkago.server.content.post.preparation;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -18,33 +18,33 @@ import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
 import com.houkago.server.content.post.source.ParsedPostCandidate;
 
-class PostReadModelCandidatePreflightTest {
+class PostCandidatePreflightTest {
 
-	private final PostReadModelCandidateProcessor processor = mock(PostReadModelCandidateProcessor.class);
-	private final PostReadModelCandidatePreflight preflight = new PostReadModelCandidatePreflight(processor);
+	private final PostCandidatePreparer preparer = mock(PostCandidatePreparer.class);
+	private final PostCandidatePreflight preflight = new PostCandidatePreflight(preparer);
 
 	@Test
 	void preparesEveryCandidateInSourceOrder() {
 		ParsedPostCandidate first = candidate("first", "blog/first/index.md");
 		ParsedPostCandidate second = candidate("second", "blog/second/index.md");
-		PostReadModelPreparedCandidate preparedFirst = prepared("first", first.sourcePath());
-		PostReadModelPreparedCandidate preparedSecond = prepared("second", second.sourcePath());
-		when(processor.prepare(first)).thenReturn(preparedFirst);
-		when(processor.prepare(second)).thenReturn(preparedSecond);
+		PreparedPostCandidate preparedFirst = prepared("first", first.sourcePath());
+		PreparedPostCandidate preparedSecond = prepared("second", second.sourcePath());
+		when(preparer.prepare(first)).thenReturn(preparedFirst);
+		when(preparer.prepare(second)).thenReturn(preparedSecond);
 
-		List<PostReadModelPreparedCandidate> result = preflight.prepareAll(List.of(first, second));
+		List<PreparedPostCandidate> result = preflight.prepareAll(List.of(first, second));
 
 		assertThat(result).containsExactly(preparedFirst, preparedSecond);
-		verify(processor).prepare(first);
-		verify(processor).prepare(second);
+		verify(preparer).prepare(first);
+		verify(preparer).prepare(second);
 	}
 
 	@Test
 	void duplicateSlugIsRejected() {
 		ParsedPostCandidate first = candidate("same", "blog/first/index.md");
 		ParsedPostCandidate second = candidate("same", "blog/second/index.md");
-		when(processor.prepare(first)).thenReturn(prepared("same", first.sourcePath()));
-		when(processor.prepare(second)).thenReturn(prepared("same", second.sourcePath()));
+		when(preparer.prepare(first)).thenReturn(prepared("same", first.sourcePath()));
+		when(preparer.prepare(second)).thenReturn(prepared("same", second.sourcePath()));
 
 		assertThatThrownBy(() -> preflight.prepareAll(List.of(first, second)))
 				.isInstanceOf(IllegalArgumentException.class)
@@ -56,8 +56,8 @@ class PostReadModelCandidatePreflightTest {
 	void duplicateSourcePathIsRejected() {
 		ParsedPostCandidate first = candidate("first", "blog/shared/index.md");
 		ParsedPostCandidate second = candidate("second", "blog/other/index.md");
-		when(processor.prepare(first)).thenReturn(prepared("first", "blog/shared/index.md"));
-		when(processor.prepare(second)).thenReturn(prepared("second", "blog/shared/index.md"));
+		when(preparer.prepare(first)).thenReturn(prepared("first", "blog/shared/index.md"));
+		when(preparer.prepare(second)).thenReturn(prepared("second", "blog/shared/index.md"));
 
 		assertThatThrownBy(() -> preflight.prepareAll(List.of(first, second)))
 				.isInstanceOf(IllegalArgumentException.class)
@@ -66,13 +66,12 @@ class PostReadModelCandidatePreflightTest {
 	}
 
 	@Test
-	void metadataOrChecksumPreparationFailurePropagates() {
+	void preparationFailurePropagates() {
 		ParsedPostCandidate candidate = candidate("invalid", "blog/invalid/index.md");
 		IllegalArgumentException exception = new IllegalArgumentException("metadata invalid");
-		when(processor.prepare(candidate)).thenThrow(exception);
+		when(preparer.prepare(candidate)).thenThrow(exception);
 
-		assertThatThrownBy(() -> preflight.prepareAll(List.of(candidate)))
-				.isSameAs(exception);
+		assertThatThrownBy(() -> preflight.prepareAll(List.of(candidate))).isSameAs(exception);
 	}
 
 	private static ParsedPostCandidate candidate(String slug, String sourcePath) {
@@ -95,8 +94,8 @@ class PostReadModelCandidatePreflightTest {
 				"body");
 	}
 
-	private static PostReadModelPreparedCandidate prepared(String slug, String sourcePath) {
-		return new PostReadModelPreparedCandidate(
+	private static PreparedPostCandidate prepared(String slug, String sourcePath) {
+		return new PreparedPostCandidate(
 				new PostMetadataMapping(
 						"Post " + slug,
 						slug,

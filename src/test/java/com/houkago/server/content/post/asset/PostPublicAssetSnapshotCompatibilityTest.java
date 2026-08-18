@@ -12,10 +12,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 import com.houkago.server.content.post.checksum.PostChecksumCalculator;
 import com.houkago.server.content.post.metadata.PostMetadataMapper;
-import com.houkago.server.content.post.readmodel.PostReadModelAssembler;
-import com.houkago.server.content.post.readmodel.PostReadModelCandidatePreflight;
-import com.houkago.server.content.post.readmodel.PostReadModelCandidateProcessor;
-import com.houkago.server.content.post.readmodel.PostReadModelPreparedCandidate;
+import com.houkago.server.content.post.preparation.PostCandidatePreflight;
+import com.houkago.server.content.post.preparation.PostCandidatePreparer;
+import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 import com.houkago.server.content.post.source.ParsedPostCandidate;
 import com.houkago.server.content.post.source.PostMarkdownParser;
 import com.houkago.server.content.post.source.PostSourceCandidateLoader;
@@ -35,14 +34,13 @@ class PostPublicAssetSnapshotCompatibilityTest {
 		PostSourceCandidateLoader loader = new PostSourceCandidateLoader(
 				new PostSourceScanner(),
 				new PostSourceFileReader(new PostMarkdownParser()));
-		PostReadModelCandidateProcessor processor = new PostReadModelCandidateProcessor(
+		PostCandidatePreparer preparer = new PostCandidatePreparer(
 				new PostMetadataMapper(),
 				new PostSourceLayoutValidator(),
-				new PostChecksumCalculator(),
-				new PostReadModelAssembler());
-		PostReadModelCandidatePreflight preflight = new PostReadModelCandidatePreflight(processor);
+				new PostChecksumCalculator());
+		PostCandidatePreflight preflight = new PostCandidatePreflight(preparer);
 		List<ParsedPostCandidate> candidates = loader.load(postsRoot);
-		List<PostReadModelPreparedCandidate> preparedCandidates = preflight.prepareAll(candidates);
+		List<PreparedPostCandidate> preparedCandidates = preflight.prepareAll(candidates);
 		long expectedPublicPosts = preparedCandidates.stream()
 				.filter(candidate -> candidate.metadata().isPubliclyVisible())
 				.count();

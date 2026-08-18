@@ -17,7 +17,7 @@ import com.houkago.server.content.post.metadata.PostMetadataMapping;
 import com.houkago.server.content.post.policy.PostSourceStatus;
 import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
-import com.houkago.server.content.post.readmodel.PostReadModelPreparedCandidate;
+import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 
 class PostPublicAssetSnapshotPublisherTest {
 
@@ -103,7 +103,7 @@ class PostPublicAssetSnapshotPublisherTest {
 		Path assets = postsRoot.resolve("blog/example-post/assets");
 		write(assets.resolve("old.png"), "old");
 		write(assets.resolve("stable.png"), "before");
-		PostReadModelPreparedCandidate published = candidate(
+		PreparedPostCandidate published = candidate(
 				"example-post",
 				"blog/example-post/index.md",
 				publicMetadata("example-post"),
@@ -116,7 +116,7 @@ class PostPublicAssetSnapshotPublisherTest {
 		write(assets.resolve("renamed.png"), "new-bytes");
 		write(assets.resolve("stable.png"), "after");
 		write(assets.resolve("added.png"), "added");
-		PostReadModelPreparedCandidate updated = candidate(
+		PreparedPostCandidate updated = candidate(
 				"example-post",
 				"blog/example-post/index.md",
 				publicMetadata("example-post"),
@@ -132,7 +132,7 @@ class PostPublicAssetSnapshotPublisherTest {
 		assertThat(first.releaseDirectory().resolve("posts/example-post/old.png")).hasContent("old");
 		assertThat(first.releaseDirectory().resolve("posts/example-post/stable.png")).hasContent("before");
 
-		PostReadModelPreparedCandidate unpublished = candidate(
+		PreparedPostCandidate unpublished = candidate(
 				"example-post",
 				"blog/example-post/index.md",
 				metadata("example-post", PostSourceStatus.DRAFT, PostSyncStatus.ACTIVE, PostVisibility.PRIVATE),
@@ -164,7 +164,7 @@ class PostPublicAssetSnapshotPublisherTest {
 		Path postsRoot = postsRoot();
 		Path assetRoot = assetRoot();
 		writePostWithAsset(postsRoot, "blog/example-post/index.md", "safe");
-		PostReadModelPreparedCandidate safe = candidate(
+		PreparedPostCandidate safe = candidate(
 				"example-post",
 				"blog/example-post/index.md",
 				publicMetadata("example-post"),
@@ -175,7 +175,7 @@ class PostPublicAssetSnapshotPublisherTest {
 		Path outsideFile = write(temporaryDirectory.resolve("outside.txt"), "private");
 		Path symlink = postsRoot.resolve("blog/example-post/assets/escape.txt");
 		Files.createSymbolicLink(symlink, outsideFile);
-		PostReadModelPreparedCandidate unsafe = candidate(
+		PreparedPostCandidate unsafe = candidate(
 				"example-post",
 				"blog/example-post/index.md",
 				publicMetadata("example-post"),
@@ -193,7 +193,7 @@ class PostPublicAssetSnapshotPublisherTest {
 		Path postsRoot = postsRoot();
 		Path assetRoot = assetRoot();
 		writePostWithAsset(postsRoot, "blog/example-post/index.md", "same");
-		PostReadModelPreparedCandidate candidate = candidate(
+		PreparedPostCandidate candidate = candidate(
 				"example-post",
 				"blog/example-post/index.md",
 				publicMetadata("example-post"),
@@ -256,12 +256,12 @@ class PostPublicAssetSnapshotPublisherTest {
 		return Files.writeString(path, content);
 	}
 
-	private static PostReadModelPreparedCandidate candidate(
+	private static PreparedPostCandidate candidate(
 			String slug,
 			String sourcePath,
 			PostMetadataMapping metadata,
 			String rawBody) {
-		return new PostReadModelPreparedCandidate(metadata, rawBody, sourcePath, "checksum-" + slug);
+		return new PreparedPostCandidate(metadata, rawBody, sourcePath, "checksum-" + slug);
 	}
 
 	private static PostMetadataMapping publicMetadata(String slug) {

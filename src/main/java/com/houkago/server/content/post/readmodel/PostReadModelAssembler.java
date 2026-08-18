@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import com.houkago.server.content.post.metadata.PostMetadataMapping;
 import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
+import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 
 @Component
 public class PostReadModelAssembler {
@@ -26,7 +27,7 @@ public class PostReadModelAssembler {
 	}
 
 	public PostReadModel create(
-			PostReadModelPreparedCandidate candidate,
+			PreparedPostCandidate candidate,
 			String commitHash,
 			Instant syncedAt) {
 		Objects.requireNonNull(candidate, "prepared candidate is required");
@@ -77,7 +78,7 @@ public class PostReadModelAssembler {
 
 	public PostReadModel update(
 			PostReadModel post,
-			PostReadModelPreparedCandidate candidate,
+			PreparedPostCandidate candidate,
 			String commitHash,
 			Instant syncedAt) {
 		Objects.requireNonNull(candidate, "prepared candidate is required");

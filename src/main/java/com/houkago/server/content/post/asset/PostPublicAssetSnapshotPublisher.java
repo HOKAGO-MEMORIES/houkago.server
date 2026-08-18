@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Component;
 
-import com.houkago.server.content.post.readmodel.PostReadModelPreparedCandidate;
+import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 
 @Component
 public class PostPublicAssetSnapshotPublisher {
@@ -37,7 +37,7 @@ public class PostPublicAssetSnapshotPublisher {
 	public PostPublicAssetSnapshot stage(
 			Path postsRoot,
 			Path assetRoot,
-			List<PostReadModelPreparedCandidate> candidates,
+			List<PreparedPostCandidate> candidates,
 			String generationId) {
 		Objects.requireNonNull(candidates, "candidates are required");
 		String requiredGenerationId = requireGenerationId(generationId);
@@ -153,16 +153,16 @@ public class PostPublicAssetSnapshotPublisher {
 	private static SnapshotStats copyPublicAssets(
 			Path sourceRoot,
 			Path stagingPostsRoot,
-			List<PostReadModelPreparedCandidate> candidates) throws IOException {
-		List<PostReadModelPreparedCandidate> orderedCandidates = candidates.stream()
-				.sorted(Comparator.comparing(PostReadModelPreparedCandidate::sourcePath))
+			List<PreparedPostCandidate> candidates) throws IOException {
+		List<PreparedPostCandidate> orderedCandidates = candidates.stream()
+				.sorted(Comparator.comparing(PreparedPostCandidate::sourcePath))
 				.toList();
 		Set<String> publishedSlugs = new HashSet<>();
 		long assetCount = 0;
 		long totalBytes = 0;
 		int publicPostCount = 0;
 
-		for (PostReadModelPreparedCandidate candidate : orderedCandidates) {
+		for (PreparedPostCandidate candidate : orderedCandidates) {
 			Objects.requireNonNull(candidate, "candidate is required");
 			if (!candidate.metadata().isPubliclyVisible()) {
 				continue;
@@ -221,7 +221,7 @@ public class PostPublicAssetSnapshotPublisher {
 	}
 
 	private static void validateReferences(
-			PostReadModelPreparedCandidate candidate,
+			PreparedPostCandidate candidate,
 			Path postDirectory,
 			Path assetsDirectory) throws IOException {
 		Matcher matcher = MARKDOWN_LINK_PATTERN.matcher(candidate.rawBody());

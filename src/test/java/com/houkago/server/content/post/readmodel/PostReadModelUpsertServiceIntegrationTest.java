@@ -25,6 +25,8 @@ import com.houkago.server.content.post.metadata.PostMetadataMapping;
 import com.houkago.server.content.post.policy.PostSourceStatus;
 import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
+import com.houkago.server.content.post.preparation.PostCandidatePreparer;
+import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 import com.houkago.server.content.post.source.ParsedPostCandidate;
 import com.houkago.server.content.post.source.PostSourceLayoutValidator;
 
@@ -38,6 +40,7 @@ import com.houkago.server.content.post.source.PostSourceLayoutValidator;
 		PostMetadataMapper.class,
 		PostSourceLayoutValidator.class,
 		PostChecksumCalculator.class,
+		PostCandidatePreparer.class,
 		PostReadModelAssembler.class,
 		PostReadModelCandidateProcessor.class,
 		PostReadModelUpsertConfiguration.class
@@ -278,10 +281,10 @@ class PostReadModelUpsertServiceIntegrationTest {
 						candidate.rawBody()));
 	}
 
-	private static PostReadModelPreparedCandidate preparedCandidate(ParsedPostCandidate candidate) {
+	private static PreparedPostCandidate preparedCandidate(ParsedPostCandidate candidate) {
 		PostMetadataMapper metadataMapper = new PostMetadataMapper();
 		PostMetadataMapping metadata = metadataMapper.map(candidate.metadataInput());
-		return new PostReadModelPreparedCandidate(
+		return new PreparedPostCandidate(
 				metadata,
 				candidate.rawBody(),
 				candidate.sourcePath(),

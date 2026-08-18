@@ -10,8 +10,8 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.ExitCodeGenerator;
 
-import com.houkago.server.content.post.readmodel.PostReadModelCandidatePreflight;
-import com.houkago.server.content.post.readmodel.PostReadModelPreparedCandidate;
+import com.houkago.server.content.post.preparation.PostCandidatePreflight;
+import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 import com.houkago.server.content.post.source.ParsedPostCandidate;
 import com.houkago.server.content.post.source.PostSourceCandidateLoader;
 
@@ -20,14 +20,14 @@ public class PostPublicAssetSnapshotRunner implements ApplicationRunner, ExitCod
 	private static final Logger log = LoggerFactory.getLogger(PostPublicAssetSnapshotRunner.class);
 
 	private final PostSourceCandidateLoader candidateLoader;
-	private final PostReadModelCandidatePreflight candidatePreflight;
+	private final PostCandidatePreflight candidatePreflight;
 	private final PostPublicAssetSnapshotPublisher publisher;
 	private final PostPublicAssetSnapshotProperties properties;
 	private int exitCode;
 
 	public PostPublicAssetSnapshotRunner(
 			PostSourceCandidateLoader candidateLoader,
-			PostReadModelCandidatePreflight candidatePreflight,
+			PostCandidatePreflight candidatePreflight,
 			PostPublicAssetSnapshotPublisher publisher,
 			PostPublicAssetSnapshotProperties properties) {
 		this.candidateLoader = Objects.requireNonNull(candidateLoader, "candidateLoader is required");
@@ -78,7 +78,7 @@ public class PostPublicAssetSnapshotRunner implements ApplicationRunner, ExitCod
 
 	private PostPublicAssetSnapshot stage(Path postsRoot, Path assetRoot, String generationId) {
 		List<ParsedPostCandidate> candidates = candidateLoader.load(postsRoot);
-		List<PostReadModelPreparedCandidate> preparedCandidates = candidatePreflight.prepareAll(candidates);
+		List<PreparedPostCandidate> preparedCandidates = candidatePreflight.prepareAll(candidates);
 		PostPublicAssetSnapshot snapshot = publisher.stage(
 				postsRoot,
 				assetRoot,

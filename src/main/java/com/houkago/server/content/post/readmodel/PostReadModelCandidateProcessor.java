@@ -5,55 +5,18 @@ import java.util.Objects;
 
 import org.springframework.stereotype.Component;
 
-import com.houkago.server.content.post.checksum.PostChecksumCalculator;
-import com.houkago.server.content.post.checksum.PostChecksumInput;
-import com.houkago.server.content.post.metadata.PostMetadataMapper;
-import com.houkago.server.content.post.metadata.PostMetadataMapping;
-import com.houkago.server.content.post.source.ParsedPostCandidate;
-import com.houkago.server.content.post.source.PostSourceLayoutValidator;
+import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 
 @Component
 public class PostReadModelCandidateProcessor {
 
-	private final PostMetadataMapper metadataMapper;
-	private final PostSourceLayoutValidator sourceLayoutValidator;
-	private final PostChecksumCalculator checksumCalculator;
 	private final PostReadModelAssembler assembler;
 
-	public PostReadModelCandidateProcessor(
-			PostMetadataMapper metadataMapper,
-			PostSourceLayoutValidator sourceLayoutValidator,
-			PostChecksumCalculator checksumCalculator,
-			PostReadModelAssembler assembler) {
-		this.metadataMapper = Objects.requireNonNull(metadataMapper, "metadataMapper is required");
-		this.sourceLayoutValidator = Objects.requireNonNull(sourceLayoutValidator, "sourceLayoutValidator is required");
-		this.checksumCalculator = Objects.requireNonNull(checksumCalculator, "checksumCalculator is required");
+	public PostReadModelCandidateProcessor(PostReadModelAssembler assembler) {
 		this.assembler = Objects.requireNonNull(assembler, "assembler is required");
 	}
 
-	public PostReadModelPreparedCandidate prepare(ParsedPostCandidate candidate) {
-		Objects.requireNonNull(candidate, "candidate is required");
-		PostMetadataMapping metadata = metadataMapper.map(candidate.metadataInput());
-		sourceLayoutValidator.validate(candidate.sourcePath(), metadata);
-		return prepare(candidate, metadata);
-	}
-
-	private PostReadModelPreparedCandidate prepare(ParsedPostCandidate candidate, PostMetadataMapping metadata) {
-		Objects.requireNonNull(candidate, "candidate is required");
-		Objects.requireNonNull(metadata, "metadata is required");
-		String checksum = checksumCalculator.calculate(PostChecksumInput.from(metadata, candidate.rawBody()));
-		return new PostReadModelPreparedCandidate(
-				metadata,
-				candidate.rawBody(),
-				candidate.sourcePath(),
-				checksum);
-	}
-
-	public PostReadModel create(ParsedPostCandidate candidate, String commitHash, Instant syncedAt) {
-		return create(prepare(candidate), commitHash, syncedAt);
-	}
-
-	public PostReadModel create(PostReadModelPreparedCandidate candidate, String commitHash, Instant syncedAt) {
+	public PostReadModel create(PreparedPostCandidate candidate, String commitHash, Instant syncedAt) {
 		String requiredCommitHash = requireText("commitHash", commitHash);
 		Objects.requireNonNull(syncedAt, "syncedAt is required");
 
@@ -62,15 +25,7 @@ public class PostReadModelCandidateProcessor {
 
 	public PostReadModel update(
 			PostReadModel existing,
-			ParsedPostCandidate candidate,
-			String commitHash,
-			Instant syncedAt) {
-		return update(existing, prepare(candidate), commitHash, syncedAt);
-	}
-
-	public PostReadModel update(
-			PostReadModel existing,
-			PostReadModelPreparedCandidate candidate,
+			PreparedPostCandidate candidate,
 			String commitHash,
 			Instant syncedAt) {
 		Objects.requireNonNull(existing, "existing post read model is required");

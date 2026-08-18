@@ -5,7 +5,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 
-import com.houkago.server.content.post.readmodel.PostReadModelCandidatePreflight;
+import com.houkago.server.content.post.preparation.PostCandidatePreflight;
 import com.houkago.server.content.post.source.PostSourceCandidateLoader;
 
 @Configuration
@@ -16,7 +16,7 @@ public class PostPublicAssetSnapshotExecutionConfiguration {
 	@Bean
 	PostPublicAssetSnapshotRunner postPublicAssetSnapshotRunner(
 			PostSourceCandidateLoader candidateLoader,
-			PostReadModelCandidatePreflight candidatePreflight,
+			PostCandidatePreflight candidatePreflight,
 			PostPublicAssetSnapshotPublisher publisher,
 			PostPublicAssetSnapshotProperties properties) {
 		return new PostPublicAssetSnapshotRunner(candidateLoader, candidatePreflight, publisher, properties);

@@ -6,17 +6,22 @@ import java.util.Optional;
 
 import org.springframework.transaction.annotation.Transactional;
 
+import com.houkago.server.content.post.preparation.PostCandidatePreparer;
+import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 import com.houkago.server.content.post.source.ParsedPostCandidate;
 
 public class PostReadModelUpsertService {
 
 	private final PostReadModelRepository repository;
+	private final PostCandidatePreparer preparer;
 	private final PostReadModelCandidateProcessor processor;
 
 	public PostReadModelUpsertService(
 			PostReadModelRepository repository,
+			PostCandidatePreparer preparer,
 			PostReadModelCandidateProcessor processor) {
 		this.repository = Objects.requireNonNull(repository, "repository is required");
+		this.preparer = Objects.requireNonNull(preparer, "preparer is required");
 		this.processor = Objects.requireNonNull(processor, "processor is required");
 	}
 
@@ -26,12 +31,12 @@ public class PostReadModelUpsertService {
 			String commitHash,
 			Instant syncedAt) {
 		Objects.requireNonNull(candidate, "candidate is required");
-		return upsertPreparedCandidate(processor.prepare(candidate), commitHash, syncedAt);
+		return upsertPreparedCandidate(preparer.prepare(candidate), commitHash, syncedAt);
 	}
 
 	@Transactional
 	public PostReadModelUpsertResult upsertPreparedCandidate(
-			PostReadModelPreparedCandidate candidate,
+			PreparedPostCandidate candidate,
 			String commitHash,
 			Instant syncedAt) {
 		Objects.requireNonNull(candidate, "prepared candidate is required");
@@ -53,7 +58,7 @@ public class PostReadModelUpsertService {
 	}
 
 	private static Optional<PostReadModel> selectExistingRow(
-			PostReadModelPreparedCandidate candidate,
+			PreparedPostCandidate candidate,
 			Optional<PostReadModel> rowBySourcePath,
 			Optional<PostReadModel> rowBySlug) {
 		if (rowBySourcePath.isPresent() && rowBySlug.isPresent()) {
@@ -77,7 +82,7 @@ public class PostReadModelUpsertService {
 
 	private static PostReadModelUpsertStatus determineStatus(
 			Optional<PostReadModel> existing,
-			PostReadModelPreparedCandidate candidate) {
+			PreparedPostCandidate candidate) {
 		if (existing.isEmpty()) {
 			return PostReadModelUpsertStatus.CREATED;
 		}
@@ -88,7 +93,7 @@ public class PostReadModelUpsertService {
 
 	private static boolean requiresReadModelUpdate(
 			PostReadModel existing,
-			PostReadModelPreparedCandidate candidate) {
+			PreparedPostCandidate candidate) {
 		return !Objects.equals(existing.getChecksum(), candidate.checksum())
 				|| !Objects.equals(existing.getSourcePath(), candidate.sourcePath())
 				|| existing.getSourceStatus() != candidate.metadata().sourceStatus()

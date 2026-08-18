@@ -21,8 +21,8 @@ import org.mockito.InOrder;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.houkago.server.content.post.readmodel.PostReadModel;
-import com.houkago.server.content.post.readmodel.PostReadModelCandidatePreflight;
-import com.houkago.server.content.post.readmodel.PostReadModelPreparedCandidate;
+import com.houkago.server.content.post.preparation.PostCandidatePreflight;
+import com.houkago.server.content.post.preparation.PreparedPostCandidate;
 import com.houkago.server.content.post.readmodel.PostReadModelRetirementService;
 import com.houkago.server.content.post.readmodel.PostReadModelUpsertConflictException;
 import com.houkago.server.content.post.readmodel.PostReadModelUpsertResult;
@@ -44,7 +44,7 @@ class PostManualFullResyncServiceTest {
 	private static final Instant SYNCED_AT = Instant.parse("2026-07-04T00:00:00Z");
 
 	private final PostSourceCandidateLoader candidateLoader = mock(PostSourceCandidateLoader.class);
-	private final PostReadModelCandidatePreflight candidatePreflight = mock(PostReadModelCandidatePreflight.class);
+	private final PostCandidatePreflight candidatePreflight = mock(PostCandidatePreflight.class);
 	private final PostReadModelUpsertService upsertService = mock(PostReadModelUpsertService.class);
 	private final PostReadModelRetirementService retirementService = mock(PostReadModelRetirementService.class);
 	private final PostManualFullResyncService service = new PostManualFullResyncService(
@@ -58,7 +58,7 @@ class PostManualFullResyncServiceTest {
 		ParsedPostCandidate first = candidate("first-post", "blog/first-post/index.md");
 		ParsedPostCandidate second = candidate("second-post", "blog/second-post/index.md");
 		List<ParsedPostCandidate> candidates = List.of(first, second);
-		List<PostReadModelPreparedCandidate> prepared = stubPreflight(candidates);
+		List<PreparedPostCandidate> prepared = stubPreflight(candidates);
 		when(candidateLoader.load(POSTS_ROOT)).thenReturn(candidates);
 		when(upsertService.upsertPreparedCandidate(prepared.get(0), COMMIT_HASH, SYNCED_AT))
 				.thenReturn(result(PostReadModelUpsertStatus.CREATED));
@@ -84,7 +84,7 @@ class PostManualFullResyncServiceTest {
 		ParsedPostCandidate third = candidate("touched-post", "blog/touched-post/index.md");
 		ParsedPostCandidate fourth = candidate("another-created-post", "blog/another-created-post/index.md");
 		List<ParsedPostCandidate> candidates = List.of(first, second, third, fourth);
-		List<PostReadModelPreparedCandidate> prepared = stubPreflight(candidates);
+		List<PreparedPostCandidate> prepared = stubPreflight(candidates);
 		when(candidateLoader.load(POSTS_ROOT)).thenReturn(candidates);
 		when(upsertService.upsertPreparedCandidate(prepared.get(0), COMMIT_HASH, SYNCED_AT))
 				.thenReturn(result(PostReadModelUpsertStatus.CREATED));
@@ -137,7 +137,7 @@ class PostManualFullResyncServiceTest {
 		ParsedPostCandidate second = candidate("b-post", "blog/b-post/index.md");
 		ParsedPostCandidate third = candidate("c-post", "blog/c-post/index.md");
 		List<ParsedPostCandidate> candidates = List.of(first, second, third);
-		List<PostReadModelPreparedCandidate> prepared = stubPreflight(candidates);
+		List<PreparedPostCandidate> prepared = stubPreflight(candidates);
 		when(candidateLoader.load(POSTS_ROOT)).thenReturn(candidates);
 		when(upsertService.upsertPreparedCandidate(any(), any(), any()))
 				.thenReturn(result(PostReadModelUpsertStatus.UPDATED));
@@ -168,7 +168,7 @@ class PostManualFullResyncServiceTest {
 		ParsedPostCandidate third = candidate("third-post", "blog/third-post/index.md");
 		PostReadModelUpsertConflictException exception = new PostReadModelUpsertConflictException("conflict");
 		List<ParsedPostCandidate> candidates = List.of(first, second, third);
-		List<PostReadModelPreparedCandidate> prepared = stubPreflight(candidates);
+		List<PreparedPostCandidate> prepared = stubPreflight(candidates);
 		when(candidateLoader.load(POSTS_ROOT)).thenReturn(candidates);
 		when(upsertService.upsertPreparedCandidate(prepared.get(0), COMMIT_HASH, SYNCED_AT))
 				.thenReturn(result(PostReadModelUpsertStatus.CREATED));
@@ -252,17 +252,17 @@ class PostManualFullResyncServiceTest {
 		return new PostReadModelUpsertResult(mock(PostReadModel.class), status);
 	}
 
-	private List<PostReadModelPreparedCandidate> stubPreflight(List<ParsedPostCandidate> candidates) {
-		List<PostReadModelPreparedCandidate> prepared = candidates.stream()
+	private List<PreparedPostCandidate> stubPreflight(List<ParsedPostCandidate> candidates) {
+		List<PreparedPostCandidate> prepared = candidates.stream()
 				.map(PostManualFullResyncServiceTest::preparedCandidate)
 				.toList();
 		when(candidatePreflight.prepareAll(candidates)).thenReturn(prepared);
 		return prepared;
 	}
 
-	private static PostReadModelPreparedCandidate preparedCandidate(ParsedPostCandidate candidate) {
+	private static PreparedPostCandidate preparedCandidate(ParsedPostCandidate candidate) {
 		PostMetadataInput input = candidate.metadataInput();
-		return new PostReadModelPreparedCandidate(
+		return new PreparedPostCandidate(
 				new PostMetadataMapping(
 						input.title(),
 						input.slug(),
