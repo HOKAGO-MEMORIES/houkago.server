@@ -23,8 +23,8 @@ class PostOneShotFullResyncRunnerTest {
 	private static final Path POSTS_ROOT = Path.of("/path/to/houkago.posts");
 	private static final String COMMIT_HASH = "example-commit-hash";
 
-	private final PostManualFullResyncService resyncService = mock(PostManualFullResyncService.class);
-	private final PostManualFullResyncProperties properties = properties();
+	private final PostFullResyncService resyncService = mock(PostFullResyncService.class);
+	private final PostFullResyncProperties properties = properties();
 	private final PostOneShotFullResyncRunner runner = new PostOneShotFullResyncRunner(resyncService, properties);
 
 	@Test
@@ -84,15 +84,15 @@ class PostOneShotFullResyncRunnerTest {
 		assertThat(output).contains("commitHash=UNSET");
 	}
 
-	private static PostManualFullResyncProperties properties() {
-		PostManualFullResyncProperties properties = new PostManualFullResyncProperties();
+	private static PostFullResyncProperties properties() {
+		PostFullResyncProperties properties = new PostFullResyncProperties();
 		properties.setPostsRoot(POSTS_ROOT.toString());
 		properties.setCommitHash(COMMIT_HASH);
 		return properties;
 	}
 
-	private static PostManualFullResyncResult result() {
-		return new PostManualFullResyncResult(
+	private static PostFullResyncResult result() {
+		return new PostFullResyncResult(
 				6,
 				1,
 				2,

@@ -16,6 +16,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.mysql.MySQLContainer;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.houkago.server.content.post.policy.PostSourceStatus;
 import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
@@ -27,6 +29,8 @@ import com.houkago.server.content.post.policy.PostVisibility;
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
+		ObjectMapper.class,
+		PostTagsJsonCodec.class,
 		PostReadModelAssembler.class,
 		PostReadModelRetirementService.class
 })

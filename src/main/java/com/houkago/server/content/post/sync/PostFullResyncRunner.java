@@ -9,16 +9,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 
-public class PostManualFullResyncRunner implements ApplicationRunner {
+public class PostFullResyncRunner implements ApplicationRunner {
 
-	private static final Logger log = LoggerFactory.getLogger(PostManualFullResyncRunner.class);
+	private static final Logger log = LoggerFactory.getLogger(PostFullResyncRunner.class);
 
-	private final PostManualFullResyncService resyncService;
-	private final PostManualFullResyncProperties properties;
+	private final PostFullResyncService resyncService;
+	private final PostFullResyncProperties properties;
 
-	public PostManualFullResyncRunner(
-			PostManualFullResyncService resyncService,
-			PostManualFullResyncProperties properties) {
+	public PostFullResyncRunner(
+			PostFullResyncService resyncService,
+			PostFullResyncProperties properties) {
 		this.resyncService = Objects.requireNonNull(resyncService, "resyncService is required");
 		this.properties = Objects.requireNonNull(properties, "properties is required");
 	}
@@ -31,9 +31,9 @@ public class PostManualFullResyncRunner implements ApplicationRunner {
 
 		Path postsRoot = Path.of(requireText("houkago.resync.posts-root", properties.getPostsRoot()));
 		String commitHash = requireText("houkago.resync.commit-hash", properties.getCommitHash());
-		PostManualFullResyncResult result = resyncService.resync(postsRoot, commitHash, Instant.now());
+		PostFullResyncResult result = resyncService.resync(postsRoot, commitHash, Instant.now());
 
-		log.info("Manual post full resync completed: candidateCount={}, createdCount={}, updatedCount={}, "
+		log.info("Post full resync completed: candidateCount={}, createdCount={}, updatedCount={}, "
 						+ "touchedCount={}, totalUpsertedCount={}, deletedCount={}, commitHash={}",
 				result.candidateCount(),
 				result.createdCount(),

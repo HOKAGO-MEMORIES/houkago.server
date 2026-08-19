@@ -3,7 +3,7 @@ package com.houkago.server.content.post.sync;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "houkago.resync")
-public class PostManualFullResyncProperties {
+public class PostFullResyncProperties {
 
 	private boolean enabled;
 	private String postsRoot;

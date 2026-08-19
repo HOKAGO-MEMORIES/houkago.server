@@ -7,22 +7,22 @@ import org.springframework.context.annotation.Profile;
 
 @Configuration(proxyBeanMethods = false)
 @Profile("!test & !asset-sync")
-@EnableConfigurationProperties(PostManualFullResyncProperties.class)
-public class PostManualFullResyncExecutionConfiguration {
+@EnableConfigurationProperties(PostFullResyncProperties.class)
+public class PostFullResyncExecutionConfiguration {
 
 	@Bean
 	@Profile("!sync & !asset-sync")
-	PostManualFullResyncRunner postManualFullResyncRunner(
-			PostManualFullResyncService resyncService,
-			PostManualFullResyncProperties properties) {
-		return new PostManualFullResyncRunner(resyncService, properties);
+	PostFullResyncRunner postFullResyncRunner(
+			PostFullResyncService resyncService,
+			PostFullResyncProperties properties) {
+		return new PostFullResyncRunner(resyncService, properties);
 	}
 
 	@Bean
 	@Profile("sync")
 	PostOneShotFullResyncRunner postOneShotFullResyncRunner(
-			PostManualFullResyncService resyncService,
-			PostManualFullResyncProperties properties) {
+			PostFullResyncService resyncService,
+			PostFullResyncProperties properties) {
 		return new PostOneShotFullResyncRunner(resyncService, properties);
 	}
 }

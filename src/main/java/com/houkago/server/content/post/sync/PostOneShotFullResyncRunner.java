@@ -14,13 +14,13 @@ public class PostOneShotFullResyncRunner implements ApplicationRunner, ExitCodeG
 
 	private static final Logger log = LoggerFactory.getLogger(PostOneShotFullResyncRunner.class);
 
-	private final PostManualFullResyncService resyncService;
-	private final PostManualFullResyncProperties properties;
+	private final PostFullResyncService resyncService;
+	private final PostFullResyncProperties properties;
 	private int exitCode;
 
 	public PostOneShotFullResyncRunner(
-			PostManualFullResyncService resyncService,
-			PostManualFullResyncProperties properties) {
+			PostFullResyncService resyncService,
+			PostFullResyncProperties properties) {
 		this.resyncService = Objects.requireNonNull(resyncService, "resyncService is required");
 		this.properties = Objects.requireNonNull(properties, "properties is required");
 	}
@@ -31,7 +31,7 @@ public class PostOneShotFullResyncRunner implements ApplicationRunner, ExitCodeG
 		try {
 			Path postsRoot = Path.of(requireText("houkago.resync.posts-root", properties.getPostsRoot()));
 			String commitHash = requireText("houkago.resync.commit-hash", properties.getCommitHash());
-			PostManualFullResyncResult result = resyncService.resync(postsRoot, commitHash, Instant.now());
+			PostFullResyncResult result = resyncService.resync(postsRoot, commitHash, Instant.now());
 
 			log.info("event=post_full_resync status=SUCCESS commitHash={} CREATED={} UPDATED={} TOUCHED={} "
 						+ "DELETED={} candidateCount={} totalUpsertedCount={}",

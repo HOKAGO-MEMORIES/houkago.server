@@ -11,14 +11,14 @@ import com.houkago.server.content.post.source.PostSourceCandidateLoader;
 
 @Configuration(proxyBeanMethods = false)
 @Profile("!test & !asset-sync")
-public class PostManualFullResyncConfiguration {
+public class PostFullResyncConfiguration {
 
 	@Bean
-	PostManualFullResyncService postManualFullResyncService(
+	PostFullResyncService postFullResyncService(
 			PostSourceCandidateLoader candidateLoader,
 			PostCandidatePreflight candidatePreflight,
 			PostReadModelUpsertService upsertService,
 			PostReadModelRetirementService retirementService) {
-		return new PostManualFullResyncService(candidateLoader, candidatePreflight, upsertService, retirementService);
+		return new PostFullResyncService(candidateLoader, candidatePreflight, upsertService, retirementService);
 	}
 }

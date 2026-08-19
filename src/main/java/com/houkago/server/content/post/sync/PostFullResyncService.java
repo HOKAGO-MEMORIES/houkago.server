@@ -15,14 +15,14 @@ import com.houkago.server.content.post.readmodel.PostReadModelUpsertStatus;
 import com.houkago.server.content.post.source.ParsedPostCandidate;
 import com.houkago.server.content.post.source.PostSourceCandidateLoader;
 
-public class PostManualFullResyncService {
+public class PostFullResyncService {
 
 	private final PostSourceCandidateLoader candidateLoader;
 	private final PostCandidatePreflight candidatePreflight;
 	private final PostReadModelUpsertService upsertService;
 	private final PostReadModelRetirementService retirementService;
 
-	public PostManualFullResyncService(
+	public PostFullResyncService(
 			PostSourceCandidateLoader candidateLoader,
 			PostCandidatePreflight candidatePreflight,
 			PostReadModelUpsertService upsertService,
@@ -33,7 +33,7 @@ public class PostManualFullResyncService {
 		this.retirementService = Objects.requireNonNull(retirementService, "retirementService is required");
 	}
 
-	public PostManualFullResyncResult resync(Path postsRoot, String commitHash, Instant syncedAt) {
+	public PostFullResyncResult resync(Path postsRoot, String commitHash, Instant syncedAt) {
 		Objects.requireNonNull(postsRoot, "postsRoot is required");
 		String requiredCommitHash = requireText("commitHash", commitHash);
 		Objects.requireNonNull(syncedAt, "syncedAt is required");
@@ -65,7 +65,7 @@ public class PostManualFullResyncService {
 				? 0
 				: retirementService.retireMissingSources(currentSourcePaths, requiredCommitHash, syncedAt);
 		int totalUpsertedCount = createdCount + updatedCount + touchedCount;
-		return new PostManualFullResyncResult(
+		return new PostFullResyncResult(
 				candidates.size(),
 				createdCount,
 				updatedCount,

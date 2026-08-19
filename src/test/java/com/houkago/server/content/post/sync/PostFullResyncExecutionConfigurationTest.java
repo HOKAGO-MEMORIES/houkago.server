@@ -6,16 +6,16 @@ import static org.mockito.Mockito.mock;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
-class PostManualFullResyncExecutionConfigurationTest {
+class PostFullResyncExecutionConfigurationTest {
 
 	private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-			.withUserConfiguration(PostManualFullResyncExecutionConfiguration.class)
-			.withBean(PostManualFullResyncService.class, () -> mock(PostManualFullResyncService.class));
+			.withUserConfiguration(PostFullResyncExecutionConfiguration.class)
+			.withBean(PostFullResyncService.class, () -> mock(PostFullResyncService.class));
 
 	@Test
 	void applicationModeRegistersOnlyStartupRunner() {
 		contextRunner.run(context -> {
-			assertThat(context).hasSingleBean(PostManualFullResyncRunner.class);
+			assertThat(context).hasSingleBean(PostFullResyncRunner.class);
 			assertThat(context).doesNotHaveBean(PostOneShotFullResyncRunner.class);
 		});
 	}
@@ -26,7 +26,7 @@ class PostManualFullResyncExecutionConfigurationTest {
 				.withPropertyValues("spring.profiles.active=sync")
 				.run(context -> {
 					assertThat(context).hasSingleBean(PostOneShotFullResyncRunner.class);
-					assertThat(context).doesNotHaveBean(PostManualFullResyncRunner.class);
+					assertThat(context).doesNotHaveBean(PostFullResyncRunner.class);
 				});
 	}
 
@@ -36,7 +36,7 @@ class PostManualFullResyncExecutionConfigurationTest {
 				.withPropertyValues("spring.profiles.active=asset-sync")
 				.run(context -> {
 					assertThat(context).doesNotHaveBean(PostOneShotFullResyncRunner.class);
-					assertThat(context).doesNotHaveBean(PostManualFullResyncRunner.class);
+					assertThat(context).doesNotHaveBean(PostFullResyncRunner.class);
 				});
 	}
 }

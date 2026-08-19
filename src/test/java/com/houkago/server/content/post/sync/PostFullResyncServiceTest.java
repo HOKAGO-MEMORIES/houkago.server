@@ -37,7 +37,7 @@ import com.houkago.server.content.post.policy.PostSourceStatus;
 import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
 
-class PostManualFullResyncServiceTest {
+class PostFullResyncServiceTest {
 
 	private static final Path POSTS_ROOT = Path.of("/tmp/houkago.posts");
 	private static final String COMMIT_HASH = "commit-a";
@@ -47,7 +47,7 @@ class PostManualFullResyncServiceTest {
 	private final PostCandidatePreflight candidatePreflight = mock(PostCandidatePreflight.class);
 	private final PostReadModelUpsertService upsertService = mock(PostReadModelUpsertService.class);
 	private final PostReadModelRetirementService retirementService = mock(PostReadModelRetirementService.class);
-	private final PostManualFullResyncService service = new PostManualFullResyncService(
+	private final PostFullResyncService service = new PostFullResyncService(
 			candidateLoader,
 			candidatePreflight,
 			upsertService,
@@ -99,7 +99,7 @@ class PostManualFullResyncServiceTest {
 				COMMIT_HASH,
 				SYNCED_AT)).thenReturn(2);
 
-		PostManualFullResyncResult result = service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT);
+		PostFullResyncResult result = service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT);
 
 		assertThat(result.candidateCount()).isEqualTo(4);
 		assertThat(result.createdCount()).isEqualTo(2);
@@ -118,7 +118,7 @@ class PostManualFullResyncServiceTest {
 		when(candidateLoader.load(POSTS_ROOT)).thenReturn(List.of());
 		when(candidatePreflight.prepareAll(List.of())).thenReturn(List.of());
 
-		PostManualFullResyncResult result = service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT);
+		PostFullResyncResult result = service.resync(POSTS_ROOT, COMMIT_HASH, SYNCED_AT);
 
 		assertThat(result.candidateCount()).isZero();
 		assertThat(result.createdCount()).isZero();
@@ -218,13 +218,13 @@ class PostManualFullResyncServiceTest {
 
 	@Test
 	void serviceDoesNotDeclareLargeTransaction() throws NoSuchMethodException {
-		Method resyncMethod = PostManualFullResyncService.class.getDeclaredMethod(
+		Method resyncMethod = PostFullResyncService.class.getDeclaredMethod(
 				"resync",
 				Path.class,
 				String.class,
 				Instant.class);
 
-		assertThat(PostManualFullResyncService.class.isAnnotationPresent(Transactional.class)).isFalse();
+		assertThat(PostFullResyncService.class.isAnnotationPresent(Transactional.class)).isFalse();
 		assertThat(resyncMethod.isAnnotationPresent(Transactional.class)).isFalse();
 	}
 
@@ -254,7 +254,7 @@ class PostManualFullResyncServiceTest {
 
 	private List<PreparedPostCandidate> stubPreflight(List<ParsedPostCandidate> candidates) {
 		List<PreparedPostCandidate> prepared = candidates.stream()
-				.map(PostManualFullResyncServiceTest::preparedCandidate)
+				.map(PostFullResyncServiceTest::preparedCandidate)
 				.toList();
 		when(candidatePreflight.prepareAll(candidates)).thenReturn(prepared);
 		return prepared;

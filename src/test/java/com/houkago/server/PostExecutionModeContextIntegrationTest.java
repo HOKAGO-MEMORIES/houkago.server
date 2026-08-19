@@ -33,7 +33,7 @@ import com.houkago.server.content.post.readmodel.PostReadModelRepository;
 import com.houkago.server.content.post.readmodel.PostReadModelRetirementService;
 import com.houkago.server.content.post.readmodel.PostReadModelUpsertService;
 import com.houkago.server.content.post.source.PostSourceCandidateLoader;
-import com.houkago.server.content.post.sync.PostManualFullResyncService;
+import com.houkago.server.content.post.sync.PostFullResyncService;
 import com.houkago.server.content.post.sync.PostOneShotFullResyncRunner;
 import com.houkago.server.content.post.webhook.PostGitHubWebhookController;
 import com.houkago.server.deployment.webhook.BackendDeployController;
@@ -60,7 +60,7 @@ class PostExecutionModeContextIntegrationTest {
 			assertThat(context.getBeansOfType(PostReadService.class)).hasSize(1);
 			assertThat(context.getBeansOfType(PostReadController.class)).hasSize(1);
 			assertThat(context.getBeansOfType(PostPublicAssetUrl.class)).hasSize(1);
-			assertThat(context.getBeansOfType(PostManualFullResyncService.class)).hasSize(1);
+			assertThat(context.getBeansOfType(PostFullResyncService.class)).hasSize(1);
 			assertThat(context.getBeansOfType(PostPublicAssetSnapshotPublisher.class)).isEmpty();
 			assertThat(context.getBeansOfType(PostPublicAssetSnapshotRunner.class)).isEmpty();
 		}
@@ -76,7 +76,7 @@ class PostExecutionModeContextIntegrationTest {
 				syncArguments)) {
 			assertDatabaseBoundary(context);
 			assertCommonPreparationBoundary(context);
-			assertThat(context.getBeansOfType(PostManualFullResyncService.class)).hasSize(1);
+			assertThat(context.getBeansOfType(PostFullResyncService.class)).hasSize(1);
 			assertThat(context.getBeansOfType(PostOneShotFullResyncRunner.class)).hasSize(1);
 			assertThat(context.getBeansOfType(PostReadService.class)).isEmpty();
 			assertThat(context.getBeansOfType(PostReadController.class)).isEmpty();
@@ -125,7 +125,7 @@ class PostExecutionModeContextIntegrationTest {
 			assertThat(context.getBeansOfType(PostReadModelCandidateProcessor.class)).isEmpty();
 			assertThat(context.getBeansOfType(PostReadModelUpsertService.class)).isEmpty();
 			assertThat(context.getBeansOfType(PostReadModelRetirementService.class)).isEmpty();
-			assertThat(context.getBeansOfType(PostManualFullResyncService.class)).isEmpty();
+			assertThat(context.getBeansOfType(PostFullResyncService.class)).isEmpty();
 			assertThat(context.getBeansOfType(PostReadService.class)).isEmpty();
 			assertThat(context.getBeansOfType(PostReadController.class)).isEmpty();
 			assertThat(context.getBeansOfType(PostPublicAssetUrl.class)).isEmpty();

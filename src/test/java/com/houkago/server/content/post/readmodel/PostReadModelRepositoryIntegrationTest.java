@@ -10,8 +10,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -65,24 +63,6 @@ class PostReadModelRepositoryIntegrationTest {
 			assertThat(post.getSyncStatus()).isEqualTo(PostSyncStatus.ACTIVE);
 			assertThat(post.getVisibility()).isEqualTo(PostVisibility.PUBLIC);
 		});
-	}
-
-	@Test
-	void repositoryFindsPublicVisiblePostsByCategory() {
-		repository.save(samplePost("boj-1002", "algorithm", PostSourceStatus.PUBLISHED, PostSyncStatus.ACTIVE,
-				PostVisibility.PUBLIC));
-		repository.save(samplePost("spring-notes", "blog", PostSourceStatus.PUBLISHED, PostSyncStatus.ACTIVE,
-				PostVisibility.PUBLIC));
-
-		Page<PostReadModel> page = repository
-				.findByCategoryAndSourceStatusAndSyncStatusAndVisibilityOrderByPostDateDescSlugAsc(
-						"algorithm",
-						PostSourceStatus.PUBLISHED,
-						PostSyncStatus.ACTIVE,
-						PostVisibility.PUBLIC,
-						PageRequest.of(0, 10));
-
-		assertThat(page.getContent()).extracting(PostReadModel::getSlug).containsExactly("boj-1002");
 	}
 
 	private static PostReadModel samplePost(

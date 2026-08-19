@@ -1,6 +1,5 @@
 package com.houkago.server.content.post.query;
 
-import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
@@ -12,16 +11,13 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import com.houkago.server.content.post.policy.PostSourceStatus;
 import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
 import com.houkago.server.content.post.readmodel.PostReadModel;
 import com.houkago.server.content.post.readmodel.PostReadModelRepository;
 import com.houkago.server.content.post.readmodel.PostReadSummaryProjection;
+import com.houkago.server.content.post.readmodel.PostTagsJsonCodec;
 
 @Service
 @Profile("!test")
@@ -31,15 +27,12 @@ public class PostReadService {
 	private static final int DEFAULT_PAGE = 0;
 	private static final int DEFAULT_SIZE = 20;
 	private static final int MAX_SIZE = 50;
-	private static final TypeReference<List<String>> TAG_LIST_TYPE = new TypeReference<>() {
-	};
-
 	private final PostReadModelRepository repository;
-	private final ObjectMapper objectMapper;
+	private final PostTagsJsonCodec tagsJsonCodec;
 
-	public PostReadService(PostReadModelRepository repository, ObjectMapper objectMapper) {
+	public PostReadService(PostReadModelRepository repository, PostTagsJsonCodec tagsJsonCodec) {
 		this.repository = repository;
-		this.objectMapper = objectMapper;
+		this.tagsJsonCodec = tagsJsonCodec;
 	}
 
 	@Transactional(readOnly = true)
@@ -84,7 +77,7 @@ public class PostReadService {
 				projection.category(),
 				projection.postDate(),
 				projection.updated(),
-				parseTags(projection.tagsJson()),
+				tagsJsonCodec.decode(projection.tagsJson()),
 				projection.thumbnail(),
 				projection.series(),
 				projection.featured());
@@ -98,23 +91,11 @@ public class PostReadService {
 				post.getCategory(),
 				post.getPostDate(),
 				post.getPostUpdatedDate(),
-				parseTags(post.getTagsJson()),
+				tagsJsonCodec.decode(post.getTagsJson()),
 				post.getThumbnail(),
 				post.getSeries(),
 				post.isFeatured(),
 				post.getRawBody());
-	}
-
-	private List<String> parseTags(String tagsJson) {
-		if (tagsJson == null || tagsJson.isBlank()) {
-			return List.of();
-		}
-
-		try {
-			return objectMapper.readValue(tagsJson, TAG_LIST_TYPE);
-		} catch (JsonProcessingException exception) {
-			throw new IllegalStateException("Failed to parse post tags JSON", exception);
-		}
 	}
 
 	private static int normalizePage(Integer page) {

@@ -17,6 +17,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.mysql.MySQLContainer;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.houkago.server.content.post.checksum.PostChecksumCalculator;
 import com.houkago.server.content.post.metadata.InvalidPostMetadataException;
 import com.houkago.server.content.post.metadata.PostMetadataInput;
@@ -37,6 +39,8 @@ import com.houkago.server.content.post.source.PostSourceLayoutValidator;
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({
+		ObjectMapper.class,
+		PostTagsJsonCodec.class,
 		PostMetadataMapper.class,
 		PostSourceLayoutValidator.class,
 		PostChecksumCalculator.class,

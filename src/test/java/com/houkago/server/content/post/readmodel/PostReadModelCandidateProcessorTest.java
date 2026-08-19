@@ -9,6 +9,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.houkago.server.content.post.metadata.PostMetadataMapping;
 import com.houkago.server.content.post.policy.PostSourceStatus;
 import com.houkago.server.content.post.policy.PostSyncStatus;
@@ -20,7 +22,7 @@ class PostReadModelCandidateProcessorTest {
 	private static final Instant SYNCED_AT = Instant.parse("2026-07-03T00:00:00Z");
 
 	private final PostReadModelCandidateProcessor processor = new PostReadModelCandidateProcessor(
-			new PostReadModelAssembler());
+			new PostReadModelAssembler(new PostTagsJsonCodec(new ObjectMapper())));
 
 	@Test
 	void createsPostReadModelFromPreparedCandidate() {

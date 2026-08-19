@@ -35,7 +35,7 @@ import com.houkago.server.content.post.source.InvalidPostSourceLayoutException;
 		"houkago.resync.enabled=false",
 		"houkago.assets.public-origin=https://assets.example.test"
 })
-class PostManualFullResyncServiceIntegrationTest {
+class PostFullResyncServiceIntegrationTest {
 
 	private static final Instant FIRST_SYNCED_AT = Instant.parse("2026-08-17T00:00:00Z");
 	private static final Instant SECOND_SYNCED_AT = Instant.parse("2026-08-17T01:00:00Z");
@@ -46,7 +46,7 @@ class PostManualFullResyncServiceIntegrationTest {
 	static final MySQLContainer mysql = new MySQLContainer("mysql:8.4.0");
 
 	@Autowired
-	private PostManualFullResyncService resyncService;
+	private PostFullResyncService resyncService;
 
 	@Autowired
 	private PostReadModelRepository repository;
@@ -95,7 +95,7 @@ class PostManualFullResyncServiceIntegrationTest {
 		String initialChecksum = repository.findBySlug("restored-post").orElseThrow().getChecksum();
 
 		Files.delete(restoredPost);
-		PostManualFullResyncResult retired = resyncService.resync(postsRoot, "commit-retired", SECOND_SYNCED_AT);
+		PostFullResyncResult retired = resyncService.resync(postsRoot, "commit-retired", SECOND_SYNCED_AT);
 
 		assertThat(retired.deletedCount()).isEqualTo(1);
 		assertThat(repository.findBySlug("restored-post")).hasValueSatisfying(post -> {
@@ -107,7 +107,7 @@ class PostManualFullResyncServiceIntegrationTest {
 				.isEqualTo(HttpStatus.NOT_FOUND);
 
 		writePost("blog/restored-post/index.md", "restored-post", "Restored body.\n");
-		PostManualFullResyncResult restored = resyncService.resync(postsRoot, "commit-restored", THIRD_SYNCED_AT);
+		PostFullResyncResult restored = resyncService.resync(postsRoot, "commit-restored", THIRD_SYNCED_AT);
 
 		assertThat(restored.updatedCount()).isEqualTo(1);
 		assertThat(restored.touchedCount()).isEqualTo(1);

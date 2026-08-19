@@ -23,19 +23,6 @@ public interface PostReadModelRepository extends JpaRepository<PostReadModel, Lo
 			PostSyncStatus syncStatus,
 			Collection<String> sourcePaths);
 
-	Page<PostReadModel> findBySourceStatusAndSyncStatusAndVisibilityOrderByPostDateDescSlugAsc(
-			PostSourceStatus sourceStatus,
-			PostSyncStatus syncStatus,
-			PostVisibility visibility,
-			Pageable pageable);
-
-	Page<PostReadModel> findByCategoryAndSourceStatusAndSyncStatusAndVisibilityOrderByPostDateDescSlugAsc(
-			String category,
-			PostSourceStatus sourceStatus,
-			PostSyncStatus syncStatus,
-			PostVisibility visibility,
-			Pageable pageable);
-
 	@Query(
 			value = """
 					select new com.houkago.server.content.post.readmodel.PostReadSummaryProjection(

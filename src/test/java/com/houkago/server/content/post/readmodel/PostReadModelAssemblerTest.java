@@ -8,6 +8,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.houkago.server.content.post.metadata.PostMetadataMapping;
 import com.houkago.server.content.post.policy.PostSourceStatus;
 import com.houkago.server.content.post.policy.PostSyncStatus;
@@ -18,7 +20,8 @@ class PostReadModelAssemblerTest {
 
 	private static final Instant SYNCED_AT = Instant.parse("2026-07-03T00:00:00Z");
 
-	private final PostReadModelAssembler assembler = new PostReadModelAssembler();
+	private final PostReadModelAssembler assembler = new PostReadModelAssembler(
+			new PostTagsJsonCodec(new ObjectMapper()));
 
 	@Test
 	void createsPostReadModelFromMetadataMapping() {
@@ -222,7 +225,7 @@ class PostReadModelAssemblerTest {
 		PostReadModel post = assembler.create(metadata, "body", "blog/a-post/index.md", "commit-a",
 				"checksum-a", SYNCED_AT);
 
-		assertThat(post.getTagsJson()).isEqualTo("[\"java\", \"spring\\\"boot\", \"line\\nbreak\"]");
+		assertThat(post.getTagsJson()).isEqualTo("[\"java\",\"spring\\\"boot\",\"line\\nbreak\"]");
 	}
 
 	private static PostMetadataMapping publishedMetadata() {

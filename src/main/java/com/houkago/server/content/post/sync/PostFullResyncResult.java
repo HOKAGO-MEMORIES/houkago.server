@@ -3,7 +3,7 @@ package com.houkago.server.content.post.sync;
 import java.time.Instant;
 import java.util.Objects;
 
-public record PostManualFullResyncResult(
+public record PostFullResyncResult(
 		int candidateCount,
 		int createdCount,
 		int updatedCount,
@@ -13,7 +13,7 @@ public record PostManualFullResyncResult(
 		String commitHash,
 		Instant syncedAt) {
 
-	public PostManualFullResyncResult {
+	public PostFullResyncResult {
 		if (candidateCount < 0) {
 			throw new IllegalArgumentException("candidateCount must not be negative");
 		}

@@ -13,14 +13,14 @@ import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
-class PostManualFullResyncRunnerTest {
+class PostFullResyncRunnerTest {
 
 	private static final Path POSTS_ROOT = Path.of("/path/to/houkago.posts");
 	private static final String COMMIT_HASH = "example-commit-hash";
 
-	private final PostManualFullResyncService resyncService = mock(PostManualFullResyncService.class);
-	private final PostManualFullResyncProperties properties = new PostManualFullResyncProperties();
-	private final PostManualFullResyncRunner runner = new PostManualFullResyncRunner(resyncService, properties);
+	private final PostFullResyncService resyncService = mock(PostFullResyncService.class);
+	private final PostFullResyncProperties properties = new PostFullResyncProperties();
+	private final PostFullResyncRunner runner = new PostFullResyncRunner(resyncService, properties);
 
 	@Test
 	void disabledRunnerDoesNotCallService() {
@@ -116,8 +116,8 @@ class PostManualFullResyncRunnerTest {
 		properties.setCommitHash(COMMIT_HASH);
 	}
 
-	private static PostManualFullResyncResult result() {
-		return new PostManualFullResyncResult(
+	private static PostFullResyncResult result() {
+		return new PostFullResyncResult(
 				2,
 				1,
 				1,
