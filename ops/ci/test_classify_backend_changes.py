@@ -174,13 +174,83 @@ class BackendChangeClassifierTest(unittest.TestCase):
             self.assertIn("README.md", cumulative["changed_paths"])
             self.assertTrue(self.future_ops_gate_blocks(cumulative))
 
-    def test_future_gates_block_control_plane_and_unknown_paths(self):
-        for path in (".github/workflows/ci.yml", "unclassified/runtime.conf"):
-            with self.subTest(path=path):
-                result = classifier.classify_paths("1" * 40, "2" * 40, [path])
-                self.assertTrue(result["control_plane_changed"])
-                self.assertTrue(self.future_app_gate_blocks(result))
-                self.assertTrue(self.future_ops_gate_blocks(result))
+    def test_historical_control_plane_does_not_deadlock_app_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = self.initialize_repository(Path(directory))
+            deployed_ops = self.git(repository, "rev-parse", "HEAD")
+            control_plane = self.commit_files(
+                repository,
+                "control plane",
+                {".github/workflows/policy.yml": "name: policy\n"},
+            )
+            target_app = self.commit_files(
+                repository,
+                "application",
+                {"src/main/java/example/App.java": "class App {}\n"},
+            )
+
+            control_push = classifier.classify_repository(repository, deployed_ops, control_plane)
+            app_push = classifier.classify_repository(repository, control_plane, target_app)
+            cumulative = classifier.classify_repository(repository, deployed_ops, target_app)
+
+            self.assertEqual("CONTROL_PLANE", control_push["classification"])
+            self.assertEqual("APP_ONLY", app_push["classification"])
+            self.assertTrue(cumulative["control_plane_changed"])
+            self.assertEqual([], cumulative["unknown_paths"])
+            self.assertFalse(self.future_app_gate_blocks(cumulative))
+
+    def test_historical_control_plane_does_not_deadlock_ops_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = self.initialize_repository(Path(directory))
+            deployed_app = self.git(repository, "rev-parse", "HEAD")
+            control_plane = self.commit_files(
+                repository,
+                "control plane",
+                {"ops/ci/policy.py": "POLICY = 'current'\n"},
+            )
+            target_ops = self.commit_files(
+                repository,
+                "operations",
+                {"compose.prod.yml": "services: {}\n"},
+            )
+
+            control_push = classifier.classify_repository(repository, deployed_app, control_plane)
+            ops_push = classifier.classify_repository(repository, control_plane, target_ops)
+            cumulative = classifier.classify_repository(repository, deployed_app, target_ops)
+
+            self.assertEqual("CONTROL_PLANE", control_push["classification"])
+            self.assertEqual("OPS_ONLY", ops_push["classification"])
+            self.assertTrue(cumulative["control_plane_changed"])
+            self.assertEqual([], cumulative["unknown_paths"])
+            self.assertFalse(self.future_ops_gate_blocks(cumulative))
+
+    def test_future_gates_block_paths_unknown_to_current_taxonomy(self):
+        result = classifier.classify_paths(
+            "1" * 40,
+            "2" * 40,
+            ["unclassified/runtime.conf"],
+        )
+
+        self.assertTrue(result["control_plane_changed"])
+        self.assertEqual(["unclassified/runtime.conf"], result["unknown_paths"])
+        self.assertTrue(self.future_app_gate_blocks(result))
+        self.assertTrue(self.future_ops_gate_blocks(result))
+
+    def test_future_gate_reclassifies_historical_paths_with_current_taxonomy(self):
+        historical_artifact = {
+            "app_changed": False,
+            "ops_changed": False,
+            "migration_changed": False,
+            "control_plane_changed": True,
+            "unknown_paths": ["README.md"],
+            "blocked_reason": "",
+        }
+        current_result = classifier.classify_paths("1" * 40, "2" * 40, ["README.md"])
+
+        self.assertTrue(self.future_app_gate_blocks(historical_artifact))
+        self.assertEqual("NO_PRODUCTION_IMPACT", current_result["classification"])
+        self.assertFalse(self.future_app_gate_blocks(current_result))
+        self.assertFalse(self.future_ops_gate_blocks(current_result))
 
     def test_future_ops_gate_blocks_cumulative_migration(self):
         result = classifier.classify_paths(
@@ -219,14 +289,20 @@ class BackendChangeClassifierTest(unittest.TestCase):
         zero = classifier.classify_repository(REPOSITORY_ROOT, classifier.ZERO_SHA, "1" * 40)
         self.assertEqual("CONTROL_PLANE", zero["classification"])
         self.assertEqual("zero_base_sha", zero["blocked_reason"])
+        self.assertTrue(self.future_app_gate_blocks(zero))
+        self.assertTrue(self.future_ops_gate_blocks(zero))
 
         invalid = classifier.classify_repository(REPOSITORY_ROOT, "invalid", "1" * 40)
         self.assertEqual("CONTROL_PLANE", invalid["classification"])
         self.assertEqual("invalid_sha", invalid["blocked_reason"])
+        self.assertTrue(self.future_app_gate_blocks(invalid))
+        self.assertTrue(self.future_ops_gate_blocks(invalid))
 
         missing = classifier.classify_repository(REPOSITORY_ROOT, "f" * 40, "1" * 40)
         self.assertEqual("CONTROL_PLANE", missing["classification"])
         self.assertEqual("missing_commit", missing["blocked_reason"])
+        self.assertTrue(self.future_app_gate_blocks(missing))
+        self.assertTrue(self.future_ops_gate_blocks(missing))
 
         with tempfile.TemporaryDirectory() as directory:
             repository = Path(directory)
@@ -244,6 +320,8 @@ class BackendChangeClassifierTest(unittest.TestCase):
             result = classifier.classify_repository(repository, base, head)
             self.assertEqual("CONTROL_PLANE", result["classification"])
             self.assertEqual("non_fast_forward_range", result["blocked_reason"])
+            self.assertTrue(self.future_app_gate_blocks(result))
+            self.assertTrue(self.future_ops_gate_blocks(result))
 
     def test_artifact_validation_fails_on_sha_mismatch(self):
         result = classifier.classify_paths("1" * 40, "2" * 40, ["README.md"])
@@ -303,11 +381,16 @@ class BackendChangeClassifierTest(unittest.TestCase):
 
     @staticmethod
     def future_app_gate_blocks(result):
-        return result["ops_changed"] or result["control_plane_changed"]
+        return bool(result["blocked_reason"] or result["ops_changed"] or result["unknown_paths"])
 
     @staticmethod
     def future_ops_gate_blocks(result):
-        return result["app_changed"] or result["control_plane_changed"]
+        return bool(
+            result["blocked_reason"]
+            or result["app_changed"]
+            or result["migration_changed"]
+            or result["unknown_paths"]
+        )
 
     def initialize_repository(self, repository: Path) -> Path:
         self.git(repository, "init", "-q")
