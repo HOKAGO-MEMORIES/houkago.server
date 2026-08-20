@@ -1,0 +1,25 @@
+[Unit]
+Description=Houkago operations reconcile queue worker
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/opt/houkago/env/ops-reconcile-worker.env
+User=root
+Group=root
+WorkingDirectory=/opt/houkago/server
+ExecStart=/usr/local/sbin/houkago-ops-reconcile-worker
+TimeoutStartSec=20min
+Restart=no
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/opt/houkago/deploy-jobs/ops /opt/houkago/ops-state /opt/houkago/backups/ops /opt/houkago/locks /opt/houkago/server /opt/houkago/runtime /usr/local/sbin /etc/systemd/system /etc/nginx/conf.d /etc/nginx/snippets
+ReadOnlyPaths=/opt/houkago/env/server.env /opt/houkago/env/backend-release.env /opt/houkago/env/ops-reconcile-worker.env
+
+[Install]
+WantedBy=multi-user.target

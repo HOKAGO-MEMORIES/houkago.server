@@ -166,7 +166,7 @@ jobs:
                 ;;
               OPS_ONLY)
                 decision=SKIP
-                reason=ops_reconcile_is_not_automated_until_cd2
+                reason=operations_changes_use_the_separate_ops_reconcile_workflow
                 ;;
               NO_PRODUCTION_IMPACT)
                 decision=SKIP

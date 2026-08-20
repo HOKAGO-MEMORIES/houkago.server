@@ -38,8 +38,10 @@ OPS_SUPPORT_FILE_NAMES = {
     "backend-deploy-worker.env.example",
     "backend-release.env.example",
     "content-sync-worker.env.example",
+    "ops-reconcile-worker.env.example",
     "test-houkago-backend-deploy-worker.sh",
     "test-houkago-content-sync-worker.sh",
+    "test_houkago_ops_reconcile_worker.py",
 }
 
 
@@ -64,7 +66,9 @@ def classify_path(path: str) -> tuple[str, bool]:
     if path == "compose.prod.yml" or path.startswith("ops/systemd/") or path.startswith("ops/nginx/"):
         return "ops", False
 
-    if path.startswith("ops/content-sync/") or path.startswith("ops/backend-deploy/"):
+    if (path.startswith("ops/content-sync/")
+            or path.startswith("ops/backend-deploy/")
+            or path.startswith("ops/ops-reconcile/")):
         if Path(path).name in OPS_SUPPORT_FILE_NAMES:
             return "no_production", False
         return "ops", False

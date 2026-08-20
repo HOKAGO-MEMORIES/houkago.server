@@ -443,7 +443,7 @@ test_restrictive_service_contract() {
 	grep -Fq 'EnvironmentFile=-/opt/houkago/env/content-sync-worker.env' "$SERVICE_UNIT" \
 		|| fail "service must load the dedicated worker environment"
 	! grep -Fq 'chmod -R' "$WORKER_SCRIPT" || fail "worker must not recursively chmod the checkout"
-	grep -Eq '^ReadOnlyPaths=.* /opt/houkago/assets$' "$SERVICE_UNIT" \
+	grep -Eq '^ReadOnlyPaths=.* /opt/houkago/assets([[:space:]]|$)' "$SERVICE_UNIT" \
 		|| fail "service must expose the asset root read-only for smoke inspection"
 	! grep -Eq '^ReadWritePaths=.* /opt/houkago/assets([[:space:]]|$)' "$SERVICE_UNIT" \
 		|| fail "host Worker must not receive direct asset-root write access"

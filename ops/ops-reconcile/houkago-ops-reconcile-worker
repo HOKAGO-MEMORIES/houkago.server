@@ -1,0 +1,769 @@
+#!/usr/bin/env python3
+
+import contextlib
+import datetime as dt
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+
+
+SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
+JOB_FIELDS = {"deliveryId", "revision", "receivedAt", "notBefore"}
+STATE_FIELDS = {"version", "revision", "recordedAt", "managedFiles"}
+
+
+class ReconcileError(RuntimeError):
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+class WorkerInterrupted(ReconcileError):
+    pass
+
+
+@dataclass(frozen=True)
+class ManagedFile:
+    source: str
+    target: Path
+    mode: int
+    kind: str
+
+
+@dataclass(frozen=True)
+class Config:
+    spool_root: Path
+    state_root: Path
+    backup_root: Path
+    server_root: Path
+    server_git_user: str
+    server_env: Path
+    release_env: Path
+    maintenance_lock: Path
+    maintenance_lock_timeout: int
+    install_root: Path
+
+    @classmethod
+    def from_environment(cls) -> "Config":
+        return cls(
+            spool_root=Path(os.environ.get(
+                "HOUKAGO_OPS_SPOOL_ROOT", "/opt/houkago/deploy-jobs/ops")),
+            state_root=Path(os.environ.get(
+                "HOUKAGO_OPS_STATE_ROOT", "/opt/houkago/ops-state")),
+            backup_root=Path(os.environ.get(
+                "HOUKAGO_OPS_BACKUP_ROOT", "/opt/houkago/backups/ops")),
+            server_root=Path(os.environ.get(
+                "HOUKAGO_SERVER_ROOT", "/opt/houkago/server")),
+            server_git_user=os.environ.get("HOUKAGO_SERVER_GIT_USER", "ubuntu"),
+            server_env=Path(os.environ.get(
+                "HOUKAGO_SERVER_ENV", "/opt/houkago/env/server.env")),
+            release_env=Path(os.environ.get(
+                "HOUKAGO_RELEASE_ENV", "/opt/houkago/env/backend-release.env")),
+            maintenance_lock=Path(os.environ.get(
+                "HOUKAGO_MAINTENANCE_LOCK_FILE",
+                "/opt/houkago/locks/backend-maintenance.lock")),
+            maintenance_lock_timeout=require_positive_integer(
+                os.environ.get("HOUKAGO_MAINTENANCE_LOCK_TIMEOUT_SECONDS", "60")),
+            install_root=Path(os.environ.get("HOUKAGO_OPS_INSTALL_ROOT", "/")),
+        )
+
+    def installed(self, path: str) -> Path:
+        return self.install_root / path.lstrip("/")
+
+    def managed_files(self) -> tuple[ManagedFile, ...]:
+        return (
+            ManagedFile("compose.prod.yml", self.installed("/opt/houkago/runtime/compose.prod.yml"), 0o644, "compose"),
+            ManagedFile("ops/content-sync/houkago-content-sync-worker", self.installed("/usr/local/sbin/houkago-content-sync-worker"), 0o755, "worker"),
+            ManagedFile("ops/backend-deploy/houkago-backend-deploy-worker", self.installed("/usr/local/sbin/houkago-backend-deploy-worker"), 0o755, "worker"),
+            ManagedFile("ops/ops-reconcile/houkago-ops-reconcile-worker", self.installed("/usr/local/sbin/houkago-ops-reconcile-worker"), 0o755, "worker"),
+            ManagedFile("ops/systemd/houkago-content-sync.service", self.installed("/etc/systemd/system/houkago-content-sync.service"), 0o644, "systemd"),
+            ManagedFile("ops/systemd/houkago-content-sync.path", self.installed("/etc/systemd/system/houkago-content-sync.path"), 0o644, "systemd"),
+            ManagedFile("ops/systemd/houkago-backend-deploy.service", self.installed("/etc/systemd/system/houkago-backend-deploy.service"), 0o644, "systemd"),
+            ManagedFile("ops/systemd/houkago-backend-deploy.path", self.installed("/etc/systemd/system/houkago-backend-deploy.path"), 0o644, "systemd"),
+            ManagedFile("ops/systemd/houkago-ops-reconcile.service", self.installed("/etc/systemd/system/houkago-ops-reconcile.service"), 0o644, "systemd"),
+            ManagedFile("ops/systemd/houkago-ops-reconcile.path", self.installed("/etc/systemd/system/houkago-ops-reconcile.path"), 0o644, "systemd"),
+            ManagedFile("ops/nginx/houkago-webhook-rate-limit.conf", self.installed("/etc/nginx/conf.d/houkago-webhook-rate-limit.conf"), 0o644, "nginx"),
+            ManagedFile("ops/nginx/github-posts-webhook.location.conf", self.installed("/etc/nginx/snippets/houkago-github-posts-webhook.conf"), 0o644, "nginx"),
+        )
+
+
+def require_positive_integer(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exception:
+        raise ReconcileError("invalid_lock_timeout") from exception
+    if parsed <= 0:
+        raise ReconcileError("invalid_lock_timeout")
+    return parsed
+
+
+def log(**fields: object) -> None:
+    rendered = " ".join(f"{key}={value}" for key, value in fields.items())
+    print(f"event=houkago_ops_reconcile_worker {rendered}", flush=True)
+
+
+def sha256_bytes(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def utc_now() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class OpsReconcileWorker:
+    def __init__(self, config: Config):
+        self.config = config
+        self.current_processing: Path | None = None
+        self.active_backup: Path | None = None
+        self.interrupted = False
+
+    @property
+    def incoming(self) -> Path:
+        return self.config.spool_root / "incoming"
+
+    @property
+    def processing(self) -> Path:
+        return self.config.spool_root / "processing"
+
+    @property
+    def succeeded(self) -> Path:
+        return self.config.spool_root / "succeeded"
+
+    @property
+    def failed(self) -> Path:
+        return self.config.spool_root / "failed"
+
+    @property
+    def temporary(self) -> Path:
+        return self.config.spool_root / ".tmp"
+
+    @property
+    def current_state_path(self) -> Path:
+        return self.config.state_root / "current.json"
+
+    @property
+    def previous_state_path(self) -> Path:
+        return self.config.state_root / "previous.json"
+
+    def run_command(
+            self,
+            arguments: list[str],
+            *,
+            git_user: bool = False,
+            capture: bool = False,
+            environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[bytes]:
+        command = list(arguments)
+        if git_user and os.geteuid() == 0 and self.config.server_git_user:
+            command = ["runuser", "-u", self.config.server_git_user, "--", *command]
+        return subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.PIPE if capture else None,
+            stderr=subprocess.PIPE if capture else None,
+            env=environment)
+
+    def git(self, *arguments: str, capture: bool = False) -> subprocess.CompletedProcess[bytes]:
+        return self.run_command(
+            ["git", "-C", str(self.config.server_root), *arguments],
+            git_user=True,
+            capture=capture)
+
+    def git_output(self, *arguments: str) -> str:
+        return self.git(*arguments, capture=True).stdout.decode("utf-8").strip()
+
+    def ensure_directories(self) -> None:
+        required = (
+            self.config.spool_root,
+            self.incoming,
+            self.processing,
+            self.succeeded,
+            self.failed,
+            self.temporary,
+            self.config.state_root,
+            self.config.backup_root,
+            self.config.maintenance_lock.parent,
+        )
+        for path in required:
+            if not path.is_dir():
+                raise ReconcileError("missing_directory")
+
+    @contextlib.contextmanager
+    def locks(self):
+        domain_lock_path = self.config.spool_root / "worker.lock"
+        with domain_lock_path.open("a+") as domain_lock:
+            try:
+                fcntl.flock(domain_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                log(status="QUEUED", reason="ops_lock_busy")
+                yield False
+                return
+
+            with self.config.maintenance_lock.open("a+") as maintenance_lock:
+                deadline = time.monotonic() + self.config.maintenance_lock_timeout
+                while True:
+                    try:
+                        fcntl.flock(maintenance_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        if time.monotonic() >= deadline:
+                            log(
+                                status="QUEUED",
+                                reason="maintenance_lock_busy",
+                                timeoutSeconds=self.config.maintenance_lock_timeout)
+                            yield False
+                            return
+                        time.sleep(0.2)
+                yield True
+
+    def validate_job(self, path: Path) -> dict[str, str]:
+        if not path.is_file() or path.is_symlink():
+            raise ReconcileError("invalid_job_file")
+        try:
+            job = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exception:
+            raise ReconcileError("invalid_job") from exception
+        if not isinstance(job, dict) or set(job) != JOB_FIELDS:
+            raise ReconcileError("invalid_job")
+        if not all(isinstance(job[field], str) for field in JOB_FIELDS):
+            raise ReconcileError("invalid_job")
+        try:
+            delivery_id = str(uuid.UUID(job["deliveryId"]))
+        except ValueError as exception:
+            raise ReconcileError("invalid_job") from exception
+        if delivery_id != job["deliveryId"] or path.name != f"{delivery_id}.json":
+            raise ReconcileError("invalid_job")
+        if not SHA_PATTERN.fullmatch(job["revision"]) or set(job["revision"]) == {"0"}:
+            raise ReconcileError("invalid_job")
+        received = parse_instant(job["receivedAt"])
+        not_before = parse_instant(job["notBefore"])
+        grace = (not_before - received).total_seconds()
+        if grace < 1 or grace > 30:
+            raise ReconcileError("invalid_job")
+        return job
+
+    def wait_until_not_before(self, job: dict[str, str]) -> None:
+        remaining = (parse_instant(job["notBefore"]) - dt.datetime.now(dt.timezone.utc)).total_seconds()
+        if remaining > 0:
+            time.sleep(min(remaining, 30))
+        log(
+            phase="request_grace",
+            status="COMPLETE",
+            receivedAt=job["receivedAt"],
+            notBefore=job["notBefore"],
+            readyAt=utc_now())
+
+    def load_state(self, path: Path) -> dict[str, object]:
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exception:
+            raise ReconcileError("invalid_ops_state") from exception
+        if not isinstance(state, dict) or set(state) != STATE_FIELDS:
+            raise ReconcileError("invalid_ops_state")
+        if state["version"] != 1 or not isinstance(state["recordedAt"], str):
+            raise ReconcileError("invalid_ops_state")
+        revision = state["revision"]
+        managed = state["managedFiles"]
+        if not isinstance(revision, str) or not SHA_PATTERN.fullmatch(revision):
+            raise ReconcileError("invalid_ops_state")
+        if not isinstance(managed, dict):
+            raise ReconcileError("invalid_ops_state")
+        expected_sources = {item.source for item in self.config.managed_files()}
+        if not set(managed).issubset(expected_sources):
+            raise ReconcileError("invalid_ops_state")
+        for source, entry in managed.items():
+            if (not isinstance(entry, dict)
+                    or set(entry) != {"target", "sha256"}
+                    or not isinstance(entry["target"], str)
+                    or not isinstance(entry["sha256"], str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])):
+                raise ReconcileError("invalid_ops_state")
+            managed_file = self.managed_by_source()[source]
+            if entry["target"] != str(managed_file.target):
+                raise ReconcileError("invalid_ops_state")
+        return state
+
+    def managed_by_source(self) -> dict[str, ManagedFile]:
+        return {item.source: item for item in self.config.managed_files()}
+
+    def verify_drift(self, state: dict[str, object]) -> None:
+        managed = state["managedFiles"]
+        assert isinstance(managed, dict)
+        for source, entry in managed.items():
+            assert isinstance(entry, dict)
+            target = self.managed_by_source()[source].target
+            if not target.is_file() or target.is_symlink():
+                raise ReconcileError("managed_file_drift")
+            if sha256_file(target) != entry["sha256"]:
+                raise ReconcileError("managed_file_drift")
+
+    def git_object(self, revision: str, source: str) -> bytes | None:
+        result = subprocess.run(
+            self.git_command("show", f"{revision}:{source}"),
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL)
+        if result.returncode == 0:
+            return result.stdout
+        exists = subprocess.run(
+            self.git_command("cat-file", "-e", f"{revision}^{{commit}}"),
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
+        if exists.returncode != 0:
+            raise ReconcileError("missing_target_revision")
+        return None
+
+    def git_command(self, *arguments: str) -> list[str]:
+        command = ["git", "-C", str(self.config.server_root), *arguments]
+        if os.geteuid() == 0 and self.config.server_git_user:
+            return ["runuser", "-u", self.config.server_git_user, "--", *command]
+        return command
+
+    def verify_revision(self, current_revision: str, target_revision: str) -> None:
+        try:
+            self.git("fetch", "--quiet", "origin", "main")
+            self.git("cat-file", "-e", f"{target_revision}^{{commit}}")
+            origin_main = self.git_output("rev-parse", "refs/remotes/origin/main")
+            self.git("merge-base", "--is-ancestor", target_revision, origin_main)
+            self.git("merge-base", "--is-ancestor", current_revision, target_revision)
+            host_head = self.git_output("rev-parse", "HEAD")
+            self.git("merge-base", "--is-ancestor", host_head, target_revision)
+            if self.git_output("status", "--porcelain"):
+                raise ReconcileError("server_checkout_dirty")
+        except subprocess.CalledProcessError as exception:
+            raise ReconcileError("revision_not_fast_forward_main") from exception
+
+    def changed_managed_files(self, current_revision: str, target_revision: str) -> tuple[ManagedFile, ...]:
+        try:
+            changed = set(self.git_output(
+                "diff", "--name-only", "--no-renames", current_revision, target_revision).splitlines())
+        except subprocess.CalledProcessError as exception:
+            raise ReconcileError("ops_diff_failed") from exception
+        return tuple(item for item in self.config.managed_files() if item.source in changed)
+
+    def stage_revision(self, revision: str, stage_root: Path) -> dict[str, Path]:
+        staged: dict[str, Path] = {}
+        for item in self.config.managed_files():
+            content = self.git_object(revision, item.source)
+            if content is None:
+                continue
+            path = stage_root / item.source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+            path.chmod(item.mode)
+            staged[item.source] = path
+        return staged
+
+    def validate_staged(self, staged: dict[str, Path]) -> None:
+        compose = staged.get("compose.prod.yml")
+        if compose is None:
+            raise ReconcileError("missing_managed_compose")
+        environment = os.environ.copy()
+        environment.pop("HOUKAGO_SERVER_IMAGE", None)
+        environment.pop("HOUKAGO_SERVER_REVISION", None)
+        try:
+            self.run_command([
+                "docker", "compose",
+                "--env-file", str(self.config.server_env),
+                "--env-file", str(self.config.release_env),
+                "--profile", "sync",
+                "--profile", "asset-sync",
+                "-f", str(compose),
+                "config", "--quiet",
+            ], environment=environment)
+            for item in self.config.managed_files():
+                if item.kind == "worker" and item.source in staged:
+                    interpreter = "python3" if item.source.endswith("ops-reconcile-worker") else "bash"
+                    if interpreter == "python3":
+                        self.run_command([
+                            interpreter,
+                            "-c",
+                            "compile(open(__import__('sys').argv[1], encoding='utf-8').read(), __import__('sys').argv[1], 'exec')",
+                            str(staged[item.source]),
+                        ])
+                    else:
+                        self.run_command([interpreter, "-n", str(staged[item.source])])
+            unit_paths = [str(staged[item.source]) for item in self.config.managed_files()
+                          if item.kind == "systemd" and item.source in staged]
+            if unit_paths:
+                self.run_command(["systemd-analyze", "verify", *unit_paths])
+        except subprocess.CalledProcessError as exception:
+            raise ReconcileError("staged_validation_failed") from exception
+
+    def create_backup(
+            self,
+            delivery_id: str,
+            current_revision: str,
+            changed: tuple[ManagedFile, ...]) -> Path:
+        timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup = self.config.backup_root / f"{timestamp}-{delivery_id}"
+        backup.mkdir(mode=0o700)
+        entries = []
+        for index, item in enumerate(changed):
+            backup_file = backup / f"{index:03d}.backup"
+            existed = item.target.is_file() and not item.target.is_symlink()
+            if existed:
+                shutil.copy2(item.target, backup_file)
+                backup_file.chmod(0o600)
+            entries.append({
+                "source": item.source,
+                "target": str(item.target),
+                "existed": existed,
+                "backup": backup_file.name if existed else None,
+                "mode": item.target.stat().st_mode & 0o777 if existed else None,
+            })
+        atomic_json(
+            backup / "manifest.json",
+            {"previousOpsRevision": current_revision, "files": entries},
+            0o600)
+        self.active_backup = backup
+        return backup
+
+    def restore_backup(self, backup: Path) -> None:
+        manifest = json.loads((backup / "manifest.json").read_text(encoding="utf-8"))
+        for entry in manifest["files"]:
+            target = Path(entry["target"])
+            if entry["existed"]:
+                atomic_install(backup / entry["backup"], target, entry["mode"])
+            else:
+                target.unlink(missing_ok=True)
+
+    def install_changed(self, changed: tuple[ManagedFile, ...], staged: dict[str, Path]) -> None:
+        for item in changed:
+            source = staged.get(item.source)
+            if source is None:
+                raise ReconcileError("managed_file_deletion_requires_manual_review")
+            atomic_install(source, item.target, item.mode)
+
+    def validate_live(self, staged: dict[str, Path]) -> None:
+        for item in self.config.managed_files():
+            staged_path = staged.get(item.source)
+            if staged_path is None:
+                continue
+            if not item.target.is_file() or item.target.is_symlink():
+                raise ReconcileError("managed_install_missing")
+            if sha256_file(staged_path) != sha256_file(item.target):
+                raise ReconcileError("managed_install_mismatch")
+        try:
+            self.validate_staged({
+                item.source: item.target
+                for item in self.config.managed_files()
+                if item.target.is_file() and item.source in staged
+            })
+            if any(item.kind == "nginx" for item in self.config.managed_files() if item.source in staged):
+                self.run_command(["nginx", "-t"])
+        except ReconcileError:
+            raise
+        except subprocess.CalledProcessError as exception:
+            raise ReconcileError("post_install_validation_failed") from exception
+
+    def apply_runtime_actions(self, changed: tuple[ManagedFile, ...]) -> None:
+        try:
+            if any(item.kind == "systemd" for item in changed):
+                self.run_command(["systemctl", "daemon-reload"])
+                for item in changed:
+                    if item.kind == "systemd" and item.target.suffix == ".path":
+                        self.run_command(["systemctl", "try-restart", item.target.name])
+            if any(item.kind == "nginx" for item in changed):
+                self.run_command(["nginx", "-t"])
+                self.run_command(["systemctl", "reload", "nginx"])
+        except subprocess.CalledProcessError as exception:
+            raise ReconcileError("runtime_activation_failed") from exception
+
+    def build_state(self, revision: str, staged: dict[str, Path]) -> dict[str, object]:
+        managed = {}
+        for item in self.config.managed_files():
+            source = staged.get(item.source)
+            if source is None:
+                continue
+            expected_hash = sha256_file(source)
+            if not item.target.is_file() or sha256_file(item.target) != expected_hash:
+                raise ReconcileError("managed_state_mismatch")
+            managed[item.source] = {"target": str(item.target), "sha256": expected_hash}
+        return {
+            "version": 1,
+            "revision": revision,
+            "recordedAt": utc_now(),
+            "managedFiles": managed,
+        }
+
+    def commit_state(self, state: dict[str, object]) -> None:
+        previous_backup = None
+        if self.previous_state_path.exists():
+            previous_backup = self.previous_state_path.read_bytes()
+        current_content = self.current_state_path.read_bytes() if self.current_state_path.exists() else None
+        try:
+            if current_content is not None:
+                atomic_bytes(self.previous_state_path, current_content, 0o600)
+            atomic_json(self.current_state_path, state, 0o600)
+        except Exception:
+            if current_content is not None:
+                atomic_bytes(self.current_state_path, current_content, 0o600)
+            if previous_backup is not None:
+                atomic_bytes(self.previous_state_path, previous_backup, 0o600)
+            else:
+                self.previous_state_path.unlink(missing_ok=True)
+            raise
+
+    def ff_checkout(self, target_revision: str) -> None:
+        try:
+            self.git("merge", "--ff-only", target_revision)
+        except subprocess.CalledProcessError as exception:
+            raise ReconcileError("server_checkout_fast_forward_failed") from exception
+
+    def move_without_overwrite(self, source: Path, target: Path) -> None:
+        if target.exists():
+            raise ReconcileError("duplicate_delivery_state")
+        source.rename(target)
+
+    def mark_failed(self, path: Path, reason: str) -> None:
+        target = self.failed / path.name
+        if target.exists():
+            timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            target = self.failed / f"{path.stem}.duplicate-{timestamp}-{os.getpid()}.json"
+        if path.exists():
+            path.rename(target)
+        self.current_processing = None
+        log(status="FAILED", reason=reason, job=path.name)
+
+    def recover_orphans(self) -> int:
+        failures = 0
+        for path in sorted(self.processing.glob("*.json")):
+            try:
+                self.validate_job(path)
+                state = self.load_state(self.current_state_path)
+                self.verify_drift(state)
+                target = self.incoming / path.name
+                self.move_without_overwrite(path, target)
+                log(phase="orphan_recovery", status="REQUEUED", job=path.name)
+            except ReconcileError as exception:
+                self.mark_failed(path, f"orphan_{exception.reason}")
+                failures += 1
+        return failures
+
+    def process_job(self, incoming_path: Path) -> bool:
+        processing_path = self.processing / incoming_path.name
+        try:
+            job = self.validate_job(incoming_path)
+            for directory in (self.processing, self.succeeded, self.failed):
+                if (directory / incoming_path.name).exists():
+                    raise ReconcileError("duplicate_delivery")
+            self.move_without_overwrite(incoming_path, processing_path)
+            self.current_processing = processing_path
+            self.wait_until_not_before(job)
+
+            current_state = self.load_state(self.current_state_path)
+            self.verify_drift(current_state)
+            current_revision = str(current_state["revision"])
+            target_revision = job["revision"]
+            if current_revision == target_revision:
+                self.move_without_overwrite(processing_path, self.succeeded / processing_path.name)
+                self.current_processing = None
+                log(status="SUCCESS", operation="already_current", deliveryId=job["deliveryId"], revision=target_revision)
+                return True
+
+            self.verify_revision(current_revision, target_revision)
+            changed = self.changed_managed_files(current_revision, target_revision)
+            if not changed:
+                raise ReconcileError("no_managed_ops_change")
+
+            with tempfile.TemporaryDirectory(prefix="ops-stage-", dir=self.temporary) as directory:
+                staged = self.stage_revision(target_revision, Path(directory))
+                self.validate_staged(staged)
+                backup = self.create_backup(job["deliveryId"], current_revision, changed)
+                old_current = self.current_state_path.read_bytes()
+                old_previous = self.previous_state_path.read_bytes() if self.previous_state_path.exists() else None
+                try:
+                    self.ff_checkout(target_revision)
+                    self.install_changed(changed, staged)
+                    self.validate_live(staged)
+                    self.apply_runtime_actions(changed)
+                    new_state = self.build_state(target_revision, staged)
+                    self.commit_state(new_state)
+                except Exception:
+                    self.restore_backup(backup)
+                    atomic_bytes(self.current_state_path, old_current, 0o600)
+                    if old_previous is None:
+                        self.previous_state_path.unlink(missing_ok=True)
+                    else:
+                        atomic_bytes(self.previous_state_path, old_previous, 0o600)
+                    self.validate_live(self.stage_revision(current_revision, Path(directory)))
+                    self.apply_runtime_actions(changed)
+                    raise
+                finally:
+                    self.active_backup = None
+
+            self.move_without_overwrite(processing_path, self.succeeded / processing_path.name)
+            self.current_processing = None
+            log(
+                status="SUCCESS",
+                deliveryId=job["deliveryId"],
+                revision=target_revision,
+                changedFiles=len(changed))
+            return True
+        except WorkerInterrupted:
+            raise
+        except ReconcileError as exception:
+            self.mark_failed(processing_path if processing_path.exists() else incoming_path, exception.reason)
+            return False
+        except Exception:
+            self.mark_failed(processing_path if processing_path.exists() else incoming_path, "unexpected_failure")
+            return False
+
+    def run(self) -> int:
+        self.ensure_directories()
+        with self.locks() as acquired:
+            if not acquired:
+                return 0
+            failures = self.recover_orphans()
+            for path in sorted(self.incoming.glob("*.json")):
+                if not self.process_job(path):
+                    failures += 1
+            log(status="COMPLETE", failures=failures)
+            return 0 if failures == 0 else 1
+
+    def adopt(self, revision: str) -> int:
+        if not SHA_PATTERN.fullmatch(revision) or set(revision) == {"0"}:
+            raise ReconcileError("invalid_adoption_revision")
+        self.ensure_directories()
+        with self.locks() as acquired:
+            if not acquired:
+                return 1
+            self.verify_revision(self.git_output("rev-parse", "HEAD"), revision)
+            if self.git_output("rev-parse", "HEAD") != revision:
+                raise ReconcileError("adoption_requires_exact_checkout")
+            with tempfile.TemporaryDirectory(prefix="ops-adopt-", dir=self.temporary) as directory:
+                staged = self.stage_revision(revision, Path(directory))
+                self.validate_live(staged)
+                state = self.build_state(revision, staged)
+                atomic_json(self.current_state_path, state, 0o600)
+                self.previous_state_path.unlink(missing_ok=True)
+            log(status="SUCCESS", operation="adopt", revision=revision)
+            return 0
+
+    def status(self) -> int:
+        state = self.load_state(self.current_state_path)
+        self.verify_drift(state)
+        log(status="CURRENT", revision=state["revision"], drift="none")
+        if self.previous_state_path.exists():
+            previous = self.load_state(self.previous_state_path)
+            log(status="PREVIOUS", revision=previous["revision"])
+        else:
+            log(status="PREVIOUS", state="unavailable")
+        return 0
+
+    def retry(self, delivery_id: str) -> int:
+        try:
+            normalized = str(uuid.UUID(delivery_id))
+        except ValueError as exception:
+            raise ReconcileError("invalid_delivery_id") from exception
+        if normalized != delivery_id:
+            raise ReconcileError("invalid_delivery_id")
+        failed = self.failed / f"{delivery_id}.json"
+        incoming = self.incoming / failed.name
+        self.validate_job(failed)
+        if any((directory / failed.name).exists() for directory in (self.incoming, self.processing, self.succeeded)):
+            raise ReconcileError("duplicate_delivery_state")
+        timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        history = self.failed / f"{delivery_id}.operator-retry-{timestamp}-{os.getpid()}.json"
+        shutil.copy2(failed, history)
+        history.chmod(0o640)
+        self.move_without_overwrite(failed, incoming)
+        log(status="REQUEUED", reason="operator_retry", deliveryId=delivery_id)
+        return 0
+
+    def handle_signal(self, signum: int, _frame: object) -> None:
+        self.interrupted = True
+        raise WorkerInterrupted(f"signal_{signum}")
+
+
+def parse_instant(value: str) -> dt.datetime:
+    if not value.endswith("Z"):
+        raise ReconcileError("invalid_timestamp")
+    try:
+        return dt.datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError as exception:
+        raise ReconcileError("invalid_timestamp") from exception
+
+
+def atomic_install(source: Path, target: Path, mode: int) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as output, source.open("rb") as input_file:
+            shutil.copyfileobj(input_file, output)
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.chmod(mode)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def atomic_bytes(target: Path, content: bytes, mode: int) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.chmod(mode)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def atomic_json(target: Path, value: object, mode: int) -> None:
+    content = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
+    atomic_bytes(target, content, mode)
+
+
+def main(arguments: list[str]) -> int:
+    worker = OpsReconcileWorker(Config.from_environment())
+    signal.signal(signal.SIGINT, worker.handle_signal)
+    signal.signal(signal.SIGTERM, worker.handle_signal)
+    signal.signal(signal.SIGHUP, worker.handle_signal)
+    command = arguments[0] if arguments else "run"
+    try:
+        if command == "run" and len(arguments) <= 1:
+            return worker.run()
+        if command == "status" and len(arguments) == 1:
+            return worker.status()
+        if command == "adopt" and len(arguments) == 2:
+            return worker.adopt(arguments[1])
+        if command == "retry" and len(arguments) == 2:
+            return worker.retry(arguments[1])
+        print(f"usage: {sys.argv[0]} [run | status | adopt <revision> | retry <delivery-id>]", file=sys.stderr)
+        return 2
+    except WorkerInterrupted as exception:
+        log(status="INTERRUPTED", reason=exception.reason)
+        return 128
+    except ReconcileError as exception:
+        log(status="FAILED", reason=exception.reason)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

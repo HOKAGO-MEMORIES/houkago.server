@@ -1,0 +1,297 @@
+name: Backend Ops Reconcile
+
+on:
+  workflow_run:
+    workflows:
+      - Backend CI
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: Successful Backend CI run ID for the exact OPS_ONLY main revision
+        required: true
+        type: string
+      confirm_ops_reconcile:
+        description: Reconcile allowlisted host operations files for the verified revision
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: backend-ops-${{ github.event.workflow_run.head_sha || inputs.ci_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    name: Evaluate Operations Reconcile
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && inputs.confirm_ops_reconcile == true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      ci_run_id: ${{ steps.source.outputs.ci_run_id }}
+      head_sha: ${{ steps.source.outputs.head_sha }}
+      classification: ${{ steps.classification.outputs.classification }}
+      decision: ${{ steps.decision.outputs.decision }}
+    steps:
+      - name: Resolve verified Backend CI run
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          AUTOMATIC_CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          AUTOMATIC_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          MANUAL_CI_RUN_ID: ${{ inputs.ci_run_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            ci_run_id="$AUTOMATIC_CI_RUN_ID"
+            head_sha="$AUTOMATIC_HEAD_SHA"
+          else
+            printf '%s' "$MANUAL_CI_RUN_ID" | grep -Eq '^[1-9][0-9]*$'
+            run_json="$RUNNER_TEMP/backend-ci-run.json"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${MANUAL_CI_RUN_ID}" > "$run_json"
+            head_sha="$(python3 - "$run_json" "$GITHUB_REPOSITORY" <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+
+          run = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          repository = sys.argv[2]
+          if run.get("name") != "Backend CI":
+              raise SystemExit("Selected run is not Backend CI")
+          if run.get("status") != "completed" or run.get("conclusion") != "success":
+              raise SystemExit("Selected Backend CI run did not complete successfully")
+          if run.get("event") not in {"push", "workflow_dispatch"}:
+              raise SystemExit("Selected Backend CI run event is not reconcilable")
+          if run.get("head_branch") != "main":
+              raise SystemExit("Selected Backend CI run is not for main")
+          if (run.get("head_repository") or {}).get("full_name") != repository:
+              raise SystemExit("Selected Backend CI run belongs to another repository")
+          head_sha = run.get("head_sha", "")
+          if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+              raise SystemExit("Selected Backend CI run head SHA is invalid")
+          print(head_sha)
+          PY
+            )"
+            ci_run_id="$MANUAL_CI_RUN_ID"
+          fi
+          {
+            echo "ci_run_id=$ci_run_id"
+            echo "head_sha=$head_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out verified revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.source.outputs.head_sha }}
+          fetch-depth: 0
+
+      - name: Verify target revision is on main
+        env:
+          TARGET_SHA: ${{ steps.source.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          git fetch --quiet origin main
+          git merge-base --is-ancestor "$TARGET_SHA" refs/remotes/origin/main
+
+      - name: Download Backend change classification
+        uses: actions/download-artifact@v8
+        with:
+          name: backend-change-classification
+          path: ${{ runner.temp }}/backend-change-classification
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.ci_run_id }}
+
+      - name: Validate Backend change classification
+        id: classification
+        env:
+          TARGET_SHA: ${{ steps.source.outputs.head_sha }}
+        run: |
+          python3 ops/ci/classify_backend_changes.py validate \
+            --artifact "$RUNNER_TEMP/backend-change-classification/classification.json" \
+            --expected-head "$TARGET_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Decide operations reconcile
+        id: decision
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CLASSIFICATION: ${{ steps.classification.outputs.classification }}
+          APP_CHANGED: ${{ steps.classification.outputs.app_changed }}
+          OPS_CHANGED: ${{ steps.classification.outputs.ops_changed }}
+          CONTROL_PLANE_CHANGED: ${{ steps.classification.outputs.control_plane_changed }}
+          UNKNOWN_PATH_COUNT: ${{ steps.classification.outputs.unknown_path_count }}
+          BLOCKED_REASON: ${{ steps.classification.outputs.blocked_reason }}
+        run: |
+          set -euo pipefail
+          decision=BLOCK
+          reason=classification_blocks_automatic_ops_reconcile
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$CLASSIFICATION" == "OPS_ONLY" \
+                  && "$APP_CHANGED" == "false" \
+                  && "$OPS_CHANGED" == "true" \
+                  && "$CONTROL_PLANE_CHANGED" == "false" \
+                  && "$UNKNOWN_PATH_COUNT" == "0" \
+                  && "$BLOCKED_REASON" == "none" ]]; then
+              decision=ALLOW
+              reason=manual_verified_ops_reconcile
+            else
+              reason=manual_reconcile_requires_exact_ops_only_classification
+            fi
+          else
+            case "$CLASSIFICATION" in
+              OPS_ONLY)
+                decision=ALLOW
+                reason=operations_runtime_changed
+                ;;
+              APP_ONLY)
+                decision=SKIP
+                reason=no_operations_runtime_files_changed
+                ;;
+              NO_PRODUCTION_IMPACT)
+                decision=SKIP
+                reason=no_production_runtime_files_changed
+                ;;
+              APP_AND_OPS)
+                decision=BLOCK
+                reason=mixed_deployment_orchestration_is_not_implemented
+                ;;
+              CONTROL_PLANE)
+                decision=BLOCK
+                reason=control_plane_or_unknown_change_requires_manual_review
+                ;;
+              *)
+                echo "Unknown classification: $CLASSIFICATION" >&2
+                exit 1
+                ;;
+            esac
+          fi
+
+          {
+            echo "decision=$decision"
+            echo "reason=$reason"
+          } >> "$GITHUB_OUTPUT"
+          {
+            printf "## Backend operations reconcile gate\n\n"
+            printf -- "- Classification: \`%s\`\n" "$CLASSIFICATION"
+            printf -- "- Decision: \`%s\`\n" "$decision"
+            printf -- "- Image publish: \`SKIPPED\`\n"
+            printf -- "- Production app deploy: \`SKIPPED\`\n"
+            printf -- "- Operations reconcile: \`%s\`\n" "$([[ "$decision" == "ALLOW" ]] && echo PENDING || echo SKIPPED)"
+            printf -- "- Reason: \`%s\`\n" "$reason"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report classification gate failure
+        if: failure()
+        run: |
+          {
+            printf "## Backend operations reconcile gate\n\n"
+            printf -- "- Decision: \`BLOCKED\`\n"
+            printf -- "- Operations reconcile: \`SKIPPED\`\n"
+            printf -- "- Reason: classification artifact was missing, invalid, or mismatched.\n"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  request:
+    name: Request Production Ops Reconcile
+    needs:
+      - evaluate
+    if: needs.evaluate.outputs.decision == 'ALLOW'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      TARGET_SHA: ${{ needs.evaluate.outputs.head_sha }}
+      OPS_URL: https://api.houkago.moe/internal/deployments/ops
+      OPS_SECRET: ${{ secrets.HOUKAGO_OPS_RECONCILE_SECRET }}
+    steps:
+      - name: Request operations reconcile
+        id: request
+        run: |
+          set -euo pipefail
+          test -n "$OPS_SECRET"
+          delivery_id="$(cat /proc/sys/kernel/random/uuid)"
+          payload_file="$RUNNER_TEMP/backend-ops-payload.json"
+          response_file="$RUNNER_TEMP/backend-ops-response.txt"
+          python3 - "$delivery_id" "$TARGET_SHA" "$payload_file" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          delivery_id, revision, output_path = sys.argv[1:]
+          pathlib.Path(output_path).write_text(
+              json.dumps({"deliveryId": delivery_id, "revision": revision}, separators=(",", ":")),
+              encoding="utf-8")
+          PY
+
+          request_started_at="$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)"
+          http_status=""
+          for attempt in 1 2 3; do
+            set +e
+            http_status="$(curl \
+              --silent \
+              --show-error \
+              --output "$response_file" \
+              --write-out '%{http_code}' \
+              --connect-timeout 5 \
+              --max-time 20 \
+              --request POST \
+              --header "Authorization: Bearer $OPS_SECRET" \
+              --header 'Content-Type: application/json' \
+              --data-binary "@$payload_file" \
+              "$OPS_URL")"
+            curl_status=$?
+            set -e
+            if [[ "$curl_status" -eq 0 && "$http_status" == "202" ]]; then
+              break
+            fi
+            if [[ "$curl_status" -eq 0 \
+                  && "$http_status" != "429" \
+                  && ! "$http_status" =~ ^5[0-9]{2}$ ]]; then
+              printf 'Operations reconcile rejected with HTTP %s.\n' "$http_status" >&2
+              exit 1
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              printf 'Operations reconcile failed after %s attempts (curl=%s, HTTP=%s).\n' \
+                "$attempt" "$curl_status" "${http_status:-unavailable}" >&2
+              exit 1
+            fi
+            sleep $((attempt * 2))
+          done
+          response_completed_at="$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)"
+          {
+            echo "delivery_id=$delivery_id"
+            echo "http_status=$http_status"
+            echo "request_started_at=$request_started_at"
+            echo "response_completed_at=$response_completed_at"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Write operations request summary
+        env:
+          DELIVERY_ID: ${{ steps.request.outputs.delivery_id }}
+          HTTP_STATUS: ${{ steps.request.outputs.http_status }}
+          RESPONSE_COMPLETED_AT: ${{ steps.request.outputs.response_completed_at }}
+        run: |
+          {
+            printf "## Production operations reconcile request\n\n"
+            printf -- "- Revision: \`%s\`\n" "$TARGET_SHA"
+            printf -- "- Delivery ID: \`%s\`\n" "$DELIVERY_ID"
+            printf -- "- HTTP result: \`%s Accepted\`\n" "$HTTP_STATUS"
+            printf -- "- Response completed at: \`%s\`\n" "$RESPONSE_COMPLETED_AT"
+            printf -- "- Scope: queue acceptance only; OCI Ops Worker is the Production truth source.\n"
+          } >> "$GITHUB_STEP_SUMMARY"

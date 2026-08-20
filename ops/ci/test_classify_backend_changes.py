@@ -30,7 +30,11 @@ class BackendChangeClassifierTest(unittest.TestCase):
             ),
             (
                 "OPS_ONLY",
-                ("compose.prod.yml", "ops/content-sync/houkago-content-sync-worker"),
+                (
+                    "compose.prod.yml",
+                    "ops/content-sync/houkago-content-sync-worker",
+                    "ops/ops-reconcile/houkago-ops-reconcile-worker",
+                ),
                 {"ops_changed": True},
             ),
             (
@@ -40,7 +44,12 @@ class BackendChangeClassifierTest(unittest.TestCase):
             ),
             (
                 "NO_PRODUCTION_IMPACT",
-                ("src/test/java/example/AppTest.java", "README.md"),
+                (
+                    "src/test/java/example/AppTest.java",
+                    "README.md",
+                    "ops/ops-reconcile/ops-reconcile-worker.env.example",
+                    "ops/ops-reconcile/test_houkago_ops_reconcile_worker.py",
+                ),
                 {"app_changed": False, "ops_changed": False},
             ),
             (
@@ -146,6 +155,20 @@ class BackendChangeClassifierTest(unittest.TestCase):
                     result["control_plane_changed"],
                 )
                 self.assertEqual(values, actual)
+
+    def test_ops_workflow_reuses_verified_artifact_and_only_allows_ops_only(self):
+        workflow = (REPOSITORY_ROOT / ".github/workflows/reconcile-ops.yml").read_text(encoding="utf-8")
+
+        self.assertIn("actions/download-artifact@v8", workflow)
+        self.assertIn("run-id: ${{ steps.source.outputs.ci_run_id }}", workflow)
+        self.assertIn('--expected-head "$TARGET_SHA"', workflow)
+        self.assertIn('[[ "$CLASSIFICATION" == "OPS_ONLY"', workflow)
+        self.assertIn("OPS_ONLY)", workflow)
+        self.assertIn("needs.evaluate.outputs.decision == 'ALLOW'", workflow)
+        self.assertIn("HOUKAGO_OPS_RECONCILE_SECRET", workflow)
+        self.assertIn("/internal/deployments/ops", workflow)
+        self.assertIn("APP_AND_OPS)", workflow)
+        self.assertIn("CONTROL_PLANE)", workflow)
 
     @staticmethod
     def git(repository: Path, *arguments: str) -> str:

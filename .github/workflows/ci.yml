@@ -37,6 +37,9 @@ jobs:
       - name: Test Backend change classifier
         run: python3 -m unittest ops/ci/test_classify_backend_changes.py -v
 
+      - name: Test operations reconcile worker
+        run: python3 ops/ops-reconcile/test_houkago_ops_reconcile_worker.py
+
       - name: Classify Backend changes
         id: classification
         env:
@@ -192,7 +195,9 @@ jobs:
               raise SystemExit("asset-sync must run without a container network")
 
           asset_target = "/workspace/public-assets"
-          app_targets = {volume["target"] for volume in services["app"].get("volumes", [])}
+          app = services["app"]
+          app_volumes = app.get("volumes", [])
+          app_targets = {volume["target"] for volume in app_volumes}
           sync_volumes = services["sync"].get("volumes", [])
           asset_sync_volumes = asset_sync.get("volumes", [])
           asset_mounts = [volume for volume in asset_sync_volumes if volume["target"] == asset_target]
@@ -202,6 +207,20 @@ jobs:
               raise SystemExit("sync must not mount the public asset root")
           if len(asset_mounts) != 1 or asset_mounts[0].get("read_only", False):
               raise SystemExit("asset-sync must mount the public asset root read-write")
+
+          required_ops_env = {
+              "HOUKAGO_OPS_WEBHOOK_ENABLED",
+              "HOUKAGO_OPS_WEBHOOK_SECRET",
+              "HOUKAGO_OPS_SPOOL_ROOT",
+              "HOUKAGO_OPS_WORKER_GRACE_PERIOD",
+          }
+          if not required_ops_env.issubset(app.get("environment", {})):
+              raise SystemExit("app must retain the operations reconcile environment contract")
+          ops_root = "/workspace/deploy-jobs/ops"
+          for state in ("processing", "succeeded", "failed"):
+              matches = [volume for volume in app_volumes if volume["target"] == f"{ops_root}/{state}"]
+              if len(matches) != 1 or not matches[0].get("read_only", False):
+                  raise SystemExit(f"ops {state} must be a nested read-only app mount")
           '
 
       - name: Build production Docker image

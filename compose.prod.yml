@@ -54,6 +54,10 @@ services:
       HOUKAGO_DEPLOY_IMAGE_REPOSITORY: ${HOUKAGO_DEPLOY_IMAGE_REPOSITORY:-ghcr.io/hokago-memories/houkago.server}
       HOUKAGO_DEPLOY_SPOOL_ROOT: ${HOUKAGO_DEPLOY_SPOOL_ROOT:-/workspace/deploy-jobs}
       HOUKAGO_DEPLOY_WORKER_GRACE_PERIOD: ${HOUKAGO_DEPLOY_WORKER_GRACE_PERIOD:-5s}
+      HOUKAGO_OPS_WEBHOOK_ENABLED: ${HOUKAGO_OPS_WEBHOOK_ENABLED:-false}
+      HOUKAGO_OPS_WEBHOOK_SECRET: ${HOUKAGO_OPS_WEBHOOK_SECRET:-}
+      HOUKAGO_OPS_SPOOL_ROOT: ${HOUKAGO_OPS_SPOOL_ROOT:-/workspace/deploy-jobs/ops}
+      HOUKAGO_OPS_WORKER_GRACE_PERIOD: ${HOUKAGO_OPS_WORKER_GRACE_PERIOD:-5s}
       SERVER_PORT: 8080
       TZ: Asia/Seoul
     ports:
@@ -92,6 +96,18 @@ services:
       - type: bind
         source: /opt/houkago/deploy-jobs/failed
         target: ${HOUKAGO_DEPLOY_SPOOL_ROOT:-/workspace/deploy-jobs}/failed
+        read_only: true
+      - type: bind
+        source: /opt/houkago/deploy-jobs/ops/processing
+        target: ${HOUKAGO_OPS_SPOOL_ROOT:-/workspace/deploy-jobs/ops}/processing
+        read_only: true
+      - type: bind
+        source: /opt/houkago/deploy-jobs/ops/succeeded
+        target: ${HOUKAGO_OPS_SPOOL_ROOT:-/workspace/deploy-jobs/ops}/succeeded
+        read_only: true
+      - type: bind
+        source: /opt/houkago/deploy-jobs/ops/failed
+        target: ${HOUKAGO_OPS_SPOOL_ROOT:-/workspace/deploy-jobs/ops}/failed
         read_only: true
     group_add:
       - ${HOUKAGO_DEPLOY_GID:-2002}

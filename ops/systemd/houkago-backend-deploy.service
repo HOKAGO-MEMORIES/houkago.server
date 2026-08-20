@@ -19,7 +19,7 @@ PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict
 ReadWritePaths=/opt/houkago/deploy-jobs /opt/houkago/deploy-state /opt/houkago/env /opt/houkago/locks /opt/houkago/server/.git /run/docker.sock
-ReadOnlyPaths=/opt/houkago/server /opt/houkago/env/server.env /opt/houkago/env/backend-deploy-worker.env
+ReadOnlyPaths=/opt/houkago/server /opt/houkago/runtime/compose.prod.yml /opt/houkago/env/server.env /opt/houkago/env/backend-deploy-worker.env
 
 [Install]
 WantedBy=multi-user.target
