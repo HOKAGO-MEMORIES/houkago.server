@@ -55,3 +55,9 @@ houkago:
       image-repository: ${HOUKAGO_DEPLOY_IMAGE_REPOSITORY:}
       spool-root: ${HOUKAGO_DEPLOY_SPOOL_ROOT:}
       worker-grace-period: ${HOUKAGO_DEPLOY_WORKER_GRACE_PERIOD:5s}
+  ops:
+    webhook:
+      enabled: ${HOUKAGO_OPS_WEBHOOK_ENABLED:false}
+      secret: ${HOUKAGO_OPS_WEBHOOK_SECRET:}
+      spool-root: ${HOUKAGO_OPS_SPOOL_ROOT:}
+      worker-grace-period: ${HOUKAGO_OPS_WORKER_GRACE_PERIOD:5s}
