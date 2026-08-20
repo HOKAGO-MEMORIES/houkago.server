@@ -92,10 +92,141 @@ class BackendChangeClassifierTest(unittest.TestCase):
             self.assertIn("src/main/java/example/App.java", result["changed_paths"])
             self.assertIn("README.md", result["changed_paths"])
 
+    def test_future_app_gate_blocks_cumulative_ops_change_after_mixed_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = self.initialize_repository(Path(directory))
+            deployed_ops = self.git(repository, "rev-parse", "HEAD")
+            mixed = self.commit_files(
+                repository,
+                "mixed",
+                {
+                    "src/main/java/example/App.java": "class App {}\n",
+                    "compose.prod.yml": "services: {}\n",
+                },
+            )
+            target_app = self.commit_files(
+                repository,
+                "application follow-up",
+                {"src/main/java/example/App.java": "class App { int version = 2; }\n"},
+            )
+
+            push_local = classifier.classify_repository(repository, mixed, target_app)
+            cumulative = classifier.classify_repository(repository, deployed_ops, target_app)
+
+            self.assertEqual("APP_ONLY", push_local["classification"])
+            self.assertEqual("APP_AND_OPS", cumulative["classification"])
+            self.assertTrue(self.future_app_gate_blocks(cumulative))
+
+    def test_future_ops_gate_blocks_cumulative_app_change_after_mixed_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = self.initialize_repository(Path(directory))
+            deployed_app = self.git(repository, "rev-parse", "HEAD")
+            mixed = self.commit_files(
+                repository,
+                "mixed",
+                {
+                    "src/main/java/example/App.java": "class App {}\n",
+                    "compose.prod.yml": "services: {}\n",
+                },
+            )
+            target_ops = self.commit_files(
+                repository,
+                "operations follow-up",
+                {"ops/systemd/example.service": "[Service]\nType=oneshot\n"},
+            )
+
+            push_local = classifier.classify_repository(repository, mixed, target_ops)
+            cumulative = classifier.classify_repository(repository, deployed_app, target_ops)
+
+            self.assertEqual("OPS_ONLY", push_local["classification"])
+            self.assertEqual("APP_AND_OPS", cumulative["classification"])
+            self.assertTrue(self.future_ops_gate_blocks(cumulative))
+
+    def test_future_gate_evaluates_the_full_multi_commit_release_range(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = self.initialize_repository(Path(directory))
+            deployed_app = self.commit_files(
+                repository,
+                "deployed application",
+                {"src/main/java/example/App.java": "class App { int version = 1; }\n"},
+            )
+            self.commit_files(repository, "docs", {"README.md": "documentation\n"})
+            mixed = self.commit_files(
+                repository,
+                "mixed",
+                {
+                    "src/main/java/example/App.java": "class App { int version = 2; }\n",
+                    "compose.prod.yml": "services: {}\n",
+                },
+            )
+            target_ops = self.commit_files(
+                repository,
+                "operations follow-up",
+                {"ops/systemd/example.service": "[Service]\nType=oneshot\n"},
+            )
+
+            push_local = classifier.classify_repository(repository, mixed, target_ops)
+            cumulative = classifier.classify_repository(repository, deployed_app, target_ops)
+
+            self.assertEqual("OPS_ONLY", push_local["classification"])
+            self.assertTrue(cumulative["app_changed"])
+            self.assertTrue(cumulative["ops_changed"])
+            self.assertIn("README.md", cumulative["changed_paths"])
+            self.assertTrue(self.future_ops_gate_blocks(cumulative))
+
+    def test_future_gates_block_control_plane_and_unknown_paths(self):
+        for path in (".github/workflows/ci.yml", "unclassified/runtime.conf"):
+            with self.subTest(path=path):
+                result = classifier.classify_paths("1" * 40, "2" * 40, [path])
+                self.assertTrue(result["control_plane_changed"])
+                self.assertTrue(self.future_app_gate_blocks(result))
+                self.assertTrue(self.future_ops_gate_blocks(result))
+
+    def test_future_ops_gate_blocks_cumulative_migration(self):
+        result = classifier.classify_paths(
+            "1" * 40,
+            "2" * 40,
+            [
+                "src/main/resources/db/migration/V3__sample.sql",
+                "compose.prod.yml",
+            ],
+        )
+
+        self.assertTrue(result["migration_changed"])
+        self.assertTrue(self.future_ops_gate_blocks(result))
+
+    def test_future_gates_allow_normal_independent_release_progression(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = self.initialize_repository(Path(directory))
+            initial = self.git(repository, "rev-parse", "HEAD")
+            current_ops = self.commit_files(
+                repository,
+                "operations",
+                {"compose.prod.yml": "services: {}\n"},
+            )
+            ops_range = classifier.classify_repository(repository, initial, current_ops)
+            self.assertFalse(self.future_ops_gate_blocks(ops_range))
+
+            target_app = self.commit_files(
+                repository,
+                "application",
+                {"src/main/java/example/App.java": "class App {}\n"},
+            )
+            app_range = classifier.classify_repository(repository, current_ops, target_app)
+            self.assertFalse(self.future_app_gate_blocks(app_range))
+
     def test_zero_and_non_fast_forward_ranges_block_automation(self):
         zero = classifier.classify_repository(REPOSITORY_ROOT, classifier.ZERO_SHA, "1" * 40)
         self.assertEqual("CONTROL_PLANE", zero["classification"])
         self.assertEqual("zero_base_sha", zero["blocked_reason"])
+
+        invalid = classifier.classify_repository(REPOSITORY_ROOT, "invalid", "1" * 40)
+        self.assertEqual("CONTROL_PLANE", invalid["classification"])
+        self.assertEqual("invalid_sha", invalid["blocked_reason"])
+
+        missing = classifier.classify_repository(REPOSITORY_ROOT, "f" * 40, "1" * 40)
+        self.assertEqual("CONTROL_PLANE", missing["classification"])
+        self.assertEqual("missing_commit", missing["blocked_reason"])
 
         with tempfile.TemporaryDirectory() as directory:
             repository = Path(directory)
@@ -169,6 +300,30 @@ class BackendChangeClassifierTest(unittest.TestCase):
         self.assertIn("/internal/deployments/ops", workflow)
         self.assertIn("APP_AND_OPS)", workflow)
         self.assertIn("CONTROL_PLANE)", workflow)
+
+    @staticmethod
+    def future_app_gate_blocks(result):
+        return result["ops_changed"] or result["control_plane_changed"]
+
+    @staticmethod
+    def future_ops_gate_blocks(result):
+        return result["app_changed"] or result["control_plane_changed"]
+
+    def initialize_repository(self, repository: Path) -> Path:
+        self.git(repository, "init", "-q")
+        self.git(repository, "config", "user.name", "Classifier Test")
+        self.git(repository, "config", "user.email", "classifier@example.invalid")
+        self.git(repository, "commit", "--allow-empty", "-qm", "base")
+        return repository
+
+    def commit_files(self, repository: Path, message: str, files: dict[str, str]) -> str:
+        for relative_path, content in files.items():
+            path = repository / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        self.git(repository, "add", "--all")
+        self.git(repository, "commit", "-qm", message)
+        return self.git(repository, "rev-parse", "HEAD")
 
     @staticmethod
     def git(repository: Path, *arguments: str) -> str:
