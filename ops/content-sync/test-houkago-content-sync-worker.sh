@@ -180,6 +180,10 @@ EOF
 		|| fail "readability guard did not preserve the failing relative path"
 	grep -Fq -- '--profile asset-sync run --rm --no-deps -T --entrypoint /bin/sh asset-sync' "$docker_arguments" \
 		|| fail "readability guard did not use the asset-sync service contract"
+	grep -Fq -- 'HOUKAGO_ASSET_PUBLICATION_POSTS_ROOT' "$docker_arguments" \
+		|| fail "readability guard did not use the asset-sync posts root"
+	! grep -Fq -- 'HOUKAGO_RESYNC_POSTS_ROOT' "$docker_arguments" \
+		|| fail "readability guard leaked the DB sync posts-root contract"
 	grep -Fq -- '-name ".*"' "$docker_arguments" \
 		|| fail "readability guard did not prune hidden directories"
 	grep -Fq -- '-name assets' "$docker_arguments" \

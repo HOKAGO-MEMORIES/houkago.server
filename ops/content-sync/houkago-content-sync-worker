@@ -235,7 +235,7 @@ verify_checkout_readable() {
 		run_compose \
 			--profile asset-sync \
 			run --rm --no-deps -T --entrypoint /bin/sh asset-sync -eu -c '
-				root="${HOUKAGO_RESYNC_POSTS_ROOT:?}"
+				root="${HOUKAGO_ASSET_PUBLICATION_POSTS_ROOT:?}"
 				if [ ! -d "$root" ] || [ ! -x "$root" ]; then
 					printf "HOUKAGO_UNREADABLE_PATH=.\n"
 					exit 1
