@@ -329,6 +329,8 @@ test_service_security_contract() {
 	grep -Eq '^ReadOnlyPaths=/opt/houkago/server([[:space:]]|$)' "$SERVICE_UNIT" \
 		|| fail "server working tree must remain read-only"
 	! grep -Fq 'docker compose down' "$WORKER_SCRIPT" || fail "worker must not stop the full stack"
+	grep -Fq -- '--project-name "$COMPOSE_PROJECT_NAME"' "$WORKER_SCRIPT" \
+		|| fail "worker must pin the production Compose project name"
 	! grep -Eq '(^|[[:space:]])eval([[:space:]]|$)' "$WORKER_SCRIPT" || fail "worker must not eval payload"
 }
 

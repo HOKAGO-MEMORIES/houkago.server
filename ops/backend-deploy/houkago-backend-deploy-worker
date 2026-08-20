@@ -26,6 +26,7 @@ readonly RELEASE_ENV="${HOUKAGO_RELEASE_ENV:-/opt/houkago/env/backend-release.en
 readonly STATE_ROOT="${HOUKAGO_DEPLOY_STATE_ROOT:-/opt/houkago/deploy-state}"
 readonly PREVIOUS_RELEASE_ENV="${HOUKAGO_PREVIOUS_RELEASE_ENV:-${STATE_ROOT}/previous-release.env}"
 readonly COMPOSE_FILE="${HOUKAGO_COMPOSE_FILE:-/opt/houkago/runtime/compose.prod.yml}"
+readonly COMPOSE_PROJECT_NAME="${HOUKAGO_COMPOSE_PROJECT_NAME:-server}"
 readonly APP_CONTAINER="${HOUKAGO_APP_CONTAINER:-server-app-1}"
 readonly MYSQL_CONTAINER="${HOUKAGO_MYSQL_CONTAINER:-server-mysql-1}"
 readonly IMAGE_REPOSITORY="${HOUKAGO_IMAGE_REPOSITORY:-ghcr.io/hokago-memories/houkago.server}"
@@ -256,6 +257,7 @@ run_compose_with_release() {
 	local release_path="$1"
 	shift
 	env -u HOUKAGO_SERVER_IMAGE -u HOUKAGO_SERVER_REVISION docker compose \
+		--project-name "$COMPOSE_PROJECT_NAME" \
 		--env-file "$SERVER_ENV" \
 		--env-file "$release_path" \
 		-f "$COMPOSE_FILE" \

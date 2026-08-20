@@ -22,6 +22,7 @@ readonly SERVER_ROOT="${HOUKAGO_SERVER_ROOT:-/opt/houkago/server}"
 readonly SERVER_ENV="${HOUKAGO_SERVER_ENV:-/opt/houkago/env/server.env}"
 readonly RELEASE_ENV="${HOUKAGO_RELEASE_ENV:-/opt/houkago/env/backend-release.env}"
 readonly COMPOSE_FILE="${HOUKAGO_COMPOSE_FILE:-/opt/houkago/runtime/compose.prod.yml}"
+readonly COMPOSE_PROJECT_NAME="${HOUKAGO_COMPOSE_PROJECT_NAME:-server}"
 readonly MAINTENANCE_LOCK_FILE="${HOUKAGO_MAINTENANCE_LOCK_FILE:-/opt/houkago/locks/backend-maintenance.lock}"
 readonly MAINTENANCE_LOCK_TIMEOUT_SECONDS="${HOUKAGO_MAINTENANCE_LOCK_TIMEOUT_SECONDS:-60}"
 readonly PUBLIC_API_BASE_URL="${HOUKAGO_PUBLIC_API_BASE_URL:-https://api.houkago.moe}"
@@ -49,6 +50,7 @@ log() {
 
 run_compose() {
 	env -u HOUKAGO_SERVER_IMAGE docker compose \
+		--project-name "$COMPOSE_PROJECT_NAME" \
 		--env-file "$SERVER_ENV" \
 		--env-file "$RELEASE_ENV" \
 		-f "$COMPOSE_FILE" \

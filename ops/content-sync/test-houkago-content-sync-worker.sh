@@ -442,6 +442,8 @@ test_restrictive_service_contract() {
 	grep -Eq '^UMask=0*007$' "$SERVICE_UNIT" || fail "service UMask is not restrictive"
 	grep -Fq 'EnvironmentFile=-/opt/houkago/env/content-sync-worker.env' "$SERVICE_UNIT" \
 		|| fail "service must load the dedicated worker environment"
+	grep -Fq -- '--project-name "$COMPOSE_PROJECT_NAME"' "$WORKER_SCRIPT" \
+		|| fail "worker must pin the production Compose project name"
 	! grep -Fq 'chmod -R' "$WORKER_SCRIPT" || fail "worker must not recursively chmod the checkout"
 	grep -Eq '^ReadOnlyPaths=.* /opt/houkago/assets([[:space:]]|$)' "$SERVICE_UNIT" \
 		|| fail "service must expose the asset root read-only for smoke inspection"

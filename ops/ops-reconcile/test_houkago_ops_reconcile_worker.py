@@ -96,6 +96,7 @@ class OpsReconcileWorkerTest(unittest.TestCase):
             server_git_user="",
             server_env=self.server_env,
             release_env=self.release_env,
+            compose_project_name="server",
             maintenance_lock=self.locks / "backend-maintenance.lock",
             maintenance_lock_timeout=1,
             install_root=self.install_root)
@@ -142,6 +143,7 @@ class OpsReconcileWorkerTest(unittest.TestCase):
             server_git_user="",
             server_env=Path("/tmp/unused"),
             release_env=Path("/tmp/unused"),
+            compose_project_name="server",
             maintenance_lock=Path("/tmp/unused"),
             maintenance_lock_timeout=1,
             install_root=Path("/"))

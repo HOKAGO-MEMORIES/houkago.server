@@ -50,6 +50,7 @@ class Config:
     server_git_user: str
     server_env: Path
     release_env: Path
+    compose_project_name: str
     maintenance_lock: Path
     maintenance_lock_timeout: int
     install_root: Path
@@ -70,6 +71,8 @@ class Config:
                 "HOUKAGO_SERVER_ENV", "/opt/houkago/env/server.env")),
             release_env=Path(os.environ.get(
                 "HOUKAGO_RELEASE_ENV", "/opt/houkago/env/backend-release.env")),
+            compose_project_name=os.environ.get(
+                "HOUKAGO_COMPOSE_PROJECT_NAME", "server"),
             maintenance_lock=Path(os.environ.get(
                 "HOUKAGO_MAINTENANCE_LOCK_FILE",
                 "/opt/houkago/locks/backend-maintenance.lock")),
@@ -383,6 +386,7 @@ class OpsReconcileWorker:
         try:
             self.run_command([
                 "docker", "compose",
+                "--project-name", self.config.compose_project_name,
                 "--env-file", str(self.config.server_env),
                 "--env-file", str(self.config.release_env),
                 "--profile", "sync",
