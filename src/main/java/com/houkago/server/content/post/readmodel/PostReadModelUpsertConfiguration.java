@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Profile;
 import com.houkago.server.content.post.preparation.PostCandidatePreparer;
 
 @Configuration(proxyBeanMethods = false)
-@Profile("!test & !asset-sync")
+@Profile("!asset-sync")
 public class PostReadModelUpsertConfiguration {
 
 	@Bean

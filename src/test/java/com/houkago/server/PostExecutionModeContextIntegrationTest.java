@@ -36,7 +36,9 @@ import com.houkago.server.content.post.source.PostSourceCandidateLoader;
 import com.houkago.server.content.post.sync.PostFullResyncService;
 import com.houkago.server.content.post.sync.PostOneShotFullResyncRunner;
 import com.houkago.server.content.post.webhook.PostGitHubWebhookController;
+import com.houkago.server.content.post.webhook.PostGitHubWebhookReceiver;
 import com.houkago.server.deployment.webhook.BackendDeployController;
+import com.houkago.server.deployment.webhook.BackendDeployReceiver;
 
 @Testcontainers
 class PostExecutionModeContextIntegrationTest {
@@ -69,7 +71,9 @@ class PostExecutionModeContextIntegrationTest {
 				databaseArguments(),
 				"--houkago.resync.enabled=true",
 				"--houkago.resync.posts-root=" + postsRoot,
-				"--houkago.resync.commit-hash=context-matrix-sync");
+				"--houkago.resync.commit-hash=context-matrix-sync",
+				"--houkago.webhook.github.posts.enabled=true",
+				"--houkago.deploy.webhook.enabled=true");
 		try (ConfigurableApplicationContext context = startApplication(
 				WebApplicationType.NONE,
 				new String[] {"docker", "sync"},
@@ -84,7 +88,9 @@ class PostExecutionModeContextIntegrationTest {
 			assertThat(context.getBeansOfType(PostPublicAssetSnapshotPublisher.class)).isEmpty();
 			assertThat(context.getBeansOfType(PostPublicAssetSnapshotRunner.class)).isEmpty();
 			assertThat(context.getBeansOfType(PostGitHubWebhookController.class)).isEmpty();
+			assertThat(context.getBeansOfType(PostGitHubWebhookReceiver.class)).isEmpty();
 			assertThat(context.getBeansOfType(BackendDeployController.class)).isEmpty();
+			assertThat(context.getBeansOfType(BackendDeployReceiver.class)).isEmpty();
 		}
 	}
 
@@ -112,7 +118,9 @@ class PostExecutionModeContextIntegrationTest {
 				"--houkago.assets.publication.posts-root=" + postsRoot,
 				"--houkago.assets.publication.asset-root=" + assetRoot,
 				"--houkago.assets.publication.generation-id=" + generationId,
-				"--houkago.assets.publication.action=publish");
+				"--houkago.assets.publication.action=publish",
+				"--houkago.webhook.github.posts.enabled=true",
+				"--houkago.deploy.webhook.enabled=true");
 
 		try (ConfigurableApplicationContext context = startApplication(
 				WebApplicationType.NONE,
@@ -133,7 +141,9 @@ class PostExecutionModeContextIntegrationTest {
 			assertThat(context.getBeansOfType(PostPublicAssetSnapshotPublisher.class)).hasSize(1);
 			assertThat(context.getBeansOfType(PostPublicAssetSnapshotRunner.class)).hasSize(1);
 			assertThat(context.getBeansOfType(PostGitHubWebhookController.class)).isEmpty();
+			assertThat(context.getBeansOfType(PostGitHubWebhookReceiver.class)).isEmpty();
 			assertThat(context.getBeansOfType(BackendDeployController.class)).isEmpty();
+			assertThat(context.getBeansOfType(BackendDeployReceiver.class)).isEmpty();
 		}
 
 		assertThat(assetRoot.resolve("current")).isSymbolicLink();

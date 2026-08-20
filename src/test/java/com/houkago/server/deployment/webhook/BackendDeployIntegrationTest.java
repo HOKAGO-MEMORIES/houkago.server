@@ -13,12 +13,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -26,15 +25,14 @@ import org.springframework.test.web.servlet.MockMvc;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-@SpringBootTest(properties = {
+@WebMvcTest(controllers = BackendDeployController.class, properties = {
 		"houkago.deploy.webhook.enabled=true",
 		"houkago.deploy.webhook.secret=synthetic-integration-secret",
 		"houkago.deploy.webhook.image-repository=ghcr.io/example/houkago.server",
 		"houkago.deploy.webhook.worker-grace-period=3s"
 })
-@AutoConfigureMockMvc
-@ActiveProfiles("test")
 @ExtendWith(OutputCaptureExtension.class)
+@Import(BackendDeployWebhookConfiguration.class)
 class BackendDeployIntegrationTest {
 
 	private static final String SECRET = "synthetic-integration-secret";

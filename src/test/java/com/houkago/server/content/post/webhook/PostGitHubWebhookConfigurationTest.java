@@ -3,13 +3,13 @@ package com.houkago.server.content.post.webhook;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 class PostGitHubWebhookConfigurationTest {
 
-	private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
+	private final WebApplicationContextRunner contextRunner = new WebApplicationContextRunner()
 			.withBean(ObjectMapper.class, ObjectMapper::new)
 			.withUserConfiguration(PostGitHubWebhookConfiguration.class);
 

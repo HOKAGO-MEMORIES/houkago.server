@@ -2,16 +2,16 @@ package com.houkago.server.deployment.webhook;
 
 import java.time.Clock;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Configuration(proxyBeanMethods = false)
-@Profile("!sync")
+@ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @EnableConfigurationProperties(BackendDeployWebhookProperties.class)
 @ConditionalOnProperty(prefix = "houkago.deploy.webhook", name = "enabled", havingValue = "true")
 public class BackendDeployWebhookConfiguration {

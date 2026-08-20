@@ -18,28 +18,26 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-@SpringBootTest(properties = {
+@WebMvcTest(controllers = PostGitHubWebhookController.class, properties = {
 		"houkago.webhook.github.posts.enabled=true",
 		"houkago.webhook.github.posts.secret=synthetic-integration-secret",
 		"houkago.webhook.github.posts.repository-full-name=example/houkago.posts",
 		"houkago.webhook.github.posts.ref=refs/heads/main"
 })
-@AutoConfigureMockMvc
-@ActiveProfiles("test")
 @ExtendWith(OutputCaptureExtension.class)
+@Import(PostGitHubWebhookConfiguration.class)
 class PostGitHubWebhookIntegrationTest {
 
 	private static final String SECRET = "synthetic-integration-secret";

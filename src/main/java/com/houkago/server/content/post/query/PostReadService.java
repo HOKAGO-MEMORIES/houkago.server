@@ -4,7 +4,6 @@ import java.util.Locale;
 import java.util.Optional;
 
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
-import org.springframework.context.annotation.Profile;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -20,7 +19,6 @@ import com.houkago.server.content.post.readmodel.PostReadSummaryProjection;
 import com.houkago.server.content.post.readmodel.PostTagsJsonCodec;
 
 @Service
-@Profile("!test")
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 public class PostReadService {
 

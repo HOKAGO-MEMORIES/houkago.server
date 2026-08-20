@@ -5,16 +5,20 @@ import static org.mockito.Mockito.mock;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 
 class PostFullResyncExecutionConfigurationTest {
 
 	private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
 			.withUserConfiguration(PostFullResyncExecutionConfiguration.class)
 			.withBean(PostFullResyncService.class, () -> mock(PostFullResyncService.class));
+	private final WebApplicationContextRunner webContextRunner = new WebApplicationContextRunner()
+			.withUserConfiguration(PostFullResyncExecutionConfiguration.class)
+			.withBean(PostFullResyncService.class, () -> mock(PostFullResyncService.class));
 
 	@Test
 	void applicationModeRegistersOnlyStartupRunner() {
-		contextRunner.run(context -> {
+		webContextRunner.run(context -> {
 			assertThat(context).hasSingleBean(PostFullResyncRunner.class);
 			assertThat(context).doesNotHaveBean(PostOneShotFullResyncRunner.class);
 		});
