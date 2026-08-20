@@ -25,6 +25,7 @@ readonly SERVER_ENV="${HOUKAGO_SERVER_ENV:-/opt/houkago/env/server.env}"
 readonly RELEASE_ENV="${HOUKAGO_RELEASE_ENV:-/opt/houkago/env/backend-release.env}"
 readonly STATE_ROOT="${HOUKAGO_DEPLOY_STATE_ROOT:-/opt/houkago/deploy-state}"
 readonly PREVIOUS_RELEASE_ENV="${HOUKAGO_PREVIOUS_RELEASE_ENV:-${STATE_ROOT}/previous-release.env}"
+readonly OPS_STATE_FILE="${HOUKAGO_OPS_STATE_FILE:-/opt/houkago/ops-state/current.json}"
 readonly COMPOSE_FILE="${HOUKAGO_COMPOSE_FILE:-/opt/houkago/runtime/compose.prod.yml}"
 readonly COMPOSE_PROJECT_NAME="${HOUKAGO_COMPOSE_PROJECT_NAME:-server}"
 readonly APP_CONTAINER="${HOUKAGO_APP_CONTAINER:-server-app-1}"
@@ -293,6 +294,159 @@ run_server_git() {
 	fi
 }
 
+load_ops_revision() {
+	python3 - "$OPS_STATE_FILE" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+try:
+    state = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, UnicodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+expected = {"version", "revision", "recordedAt", "managedFiles"}
+if not isinstance(state, dict) or set(state) != expected:
+    raise SystemExit(1)
+if state["version"] != 1 or not isinstance(state["recordedAt"], str):
+    raise SystemExit(1)
+revision = state["revision"]
+managed = state["managedFiles"]
+if (not isinstance(revision, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", revision)
+        or set(revision) == {"0"}
+        or not state["recordedAt"]
+        or not isinstance(managed, dict)):
+    raise SystemExit(1)
+for source, entry in managed.items():
+    if (not isinstance(source, str)
+            or not source
+            or not isinstance(entry, dict)
+            or set(entry) != {"target", "sha256"}
+            or not isinstance(entry["target"], str)
+            or not entry["target"]
+            or not isinstance(entry["sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])):
+        raise SystemExit(1)
+print(revision)
+PY
+}
+
+verify_cross_release_compatibility() {
+	local opposite_revision="$1"
+	local target_revision="$2"
+	local origin_main classifier_path classification_path gate_output gate_status
+
+	run_server_git fetch --quiet origin main || return 1
+	run_server_git cat-file -e "${opposite_revision}^{commit}" 2>/dev/null || return 1
+	run_server_git cat-file -e "${target_revision}^{commit}" 2>/dev/null || return 1
+	origin_main="$(run_server_git rev-parse refs/remotes/origin/main)" || return 1
+	run_server_git merge-base --is-ancestor "$target_revision" "$origin_main" || return 1
+	run_server_git merge-base --is-ancestor "$opposite_revision" "$target_revision" || return 1
+
+	classifier_path="$(mktemp "${TEMPORARY_DIRECTORY}/target-classifier.XXXXXX")" || return 1
+	remember_temporary_path "$classifier_path"
+	if ! run_server_git show "${target_revision}:ops/ci/classify_backend_changes.py" > "$classifier_path"; then
+		return 1
+	fi
+	chmod 0700 "$classifier_path" || return 1
+	python3 - "$classifier_path" <<'PY' || return 1
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+compile(path.read_text(encoding="utf-8"), str(path), "exec")
+PY
+
+	classification_path="$(mktemp "${TEMPORARY_DIRECTORY}/compatibility-result.XXXXXX")" || return 1
+	remember_temporary_path "$classification_path"
+	if ! env -i \
+			PATH=/usr/bin:/bin \
+			GIT_CONFIG_COUNT=1 \
+			GIT_CONFIG_KEY_0=safe.directory \
+			GIT_CONFIG_VALUE_0="$SERVER_ROOT" \
+			python3 "$classifier_path" classify-range \
+				--repository "$SERVER_ROOT" \
+				--base "$opposite_revision" \
+				--head "$target_revision" > "$classification_path"; then
+		return 1
+	fi
+
+	gate_output="$(python3 - "$classification_path" "$opposite_revision" "$target_revision" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+base = sys.argv[2]
+head = sys.argv[3]
+try:
+    result = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, UnicodeError, json.JSONDecodeError):
+    raise SystemExit(2)
+
+required = {
+    "head_sha": str,
+    "base_sha": str,
+    "classification": str,
+    "app_changed": bool,
+    "ops_changed": bool,
+    "control_plane_changed": bool,
+    "migration_changed": bool,
+    "changed_paths": list,
+    "unknown_paths": list,
+    "blocked_reason": str,
+}
+classifications = {
+    "APP_ONLY",
+    "OPS_ONLY",
+    "APP_AND_OPS",
+    "NO_PRODUCTION_IMPACT",
+    "CONTROL_PLANE",
+}
+if not isinstance(result, dict) or set(result) != set(required):
+    raise SystemExit(2)
+if any(not isinstance(result[field], expected) for field, expected in required.items()):
+    raise SystemExit(2)
+if result["base_sha"] != base or result["head_sha"] != head:
+    raise SystemExit(2)
+if result["classification"] not in classifications:
+    raise SystemExit(2)
+if not all(isinstance(item, str) and item for item in result["changed_paths"]):
+    raise SystemExit(2)
+if not all(isinstance(item, str) and item for item in result["unknown_paths"]):
+    raise SystemExit(2)
+if result["migration_changed"] and not result["app_changed"]:
+    raise SystemExit(2)
+if result["unknown_paths"] and not result["control_plane_changed"]:
+    raise SystemExit(2)
+
+reason = "none"
+if result["blocked_reason"]:
+    reason = f"invalid_range_{result['blocked_reason']}"
+elif result["unknown_paths"]:
+    reason = "unknown_path"
+elif result["ops_changed"]:
+    reason = "unapplied_ops_runtime_change"
+
+decision = "ALLOW" if reason == "none" else "BLOCK"
+print(
+    f"result={decision} reason={reason} "
+    f"appChanged={str(result['app_changed']).lower()} "
+    f"opsChanged={str(result['ops_changed']).lower()} "
+    f"controlPlaneChanged={str(result['control_plane_changed']).lower()} "
+    f"migrationChanged={str(result['migration_changed']).lower()} "
+    f"unknownCount={len(result['unknown_paths'])}")
+raise SystemExit(0 if decision == "ALLOW" else 3)
+PY
+)"
+	gate_status=$?
+	log "phase=compatibility_gate lane=app oppositeRevision=${opposite_revision:0:12} targetRevision=${target_revision:0:12} ${gate_output:-result=ERROR reason=invalid_classifier_output}"
+	return "$gate_status"
+}
+
 verify_migration_gate() {
 	local current_revision="$1"
 	local target_revision="$2"
@@ -462,6 +616,7 @@ process_job() {
 	local incoming_path="$1"
 	local validation_output delivery_id revision image received_at not_before base_name processing_path
 	local current_output current_image current_revision current_schema candidate_env mysql_id migration_status
+	local ops_revision compatibility_status
 	local finalization_status
 
 	base_name="$(basename -- "$incoming_path")"
@@ -525,10 +680,25 @@ process_job() {
 			fi
 			last_failure_reason="already_current_state_move"
 		else
-			last_failure_reason="migration_gate"
-			verify_migration_gate "$current_revision" "$revision"
-			migration_status=$?
-			if [[ "$migration_status" -eq 0 ]]; then
+			last_failure_reason="invalid_ops_state"
+			ops_revision="$(load_ops_revision)"
+			if [[ -n "$ops_revision" ]]; then
+				last_failure_reason="compatibility_gate_failed"
+				verify_cross_release_compatibility "$ops_revision" "$revision"
+				compatibility_status=$?
+				if [[ "$compatibility_status" -eq 3 ]]; then
+					last_failure_reason="cross_release_incompatible"
+				elif [[ "$compatibility_status" -eq 0 ]]; then
+					last_failure_reason="migration_gate"
+					verify_migration_gate "$current_revision" "$revision"
+					migration_status=$?
+				else
+					migration_status=1
+				fi
+			else
+				migration_status=1
+			fi
+			if [[ "${compatibility_status:-1}" -eq 0 && "$migration_status" -eq 0 ]]; then
 				last_failure_reason="artifact_verification"
 				if verify_artifact "$image" "$revision"; then
 					last_failure_reason="candidate_release"
@@ -562,7 +732,7 @@ process_job() {
 						fi
 					fi
 				fi
-			elif [[ "$migration_status" -eq 2 ]]; then
+			elif [[ "${compatibility_status:-1}" -eq 0 && "$migration_status" -eq 2 ]]; then
 				last_failure_reason="migration_review_required"
 			fi
 		fi
@@ -626,12 +796,14 @@ manual_rollback() {
 
 dry_run_job() {
 	local job_path="$1"
-	local output revision image current_output current_revision candidate_env migration_status
+	local output revision image current_output current_revision candidate_env migration_status ops_revision
 	output="$(validate_job "$job_path")" || return 1
 	revision="$(printf '%s\n' "$output" | sed -n '2p')"
 	image="$(printf '%s\n' "$output" | sed -n '3p')"
 	current_output="$(validate_release_env "$RELEASE_ENV")" || return 1
 	current_revision="$(printf '%s\n' "$current_output" | sed -n '2p')"
+	ops_revision="$(load_ops_revision)" || return 1
+	verify_cross_release_compatibility "$ops_revision" "$revision" || return $?
 	verify_migration_gate "$current_revision" "$revision"
 	migration_status=$?
 	[[ "$migration_status" -eq 0 ]] || return "$migration_status"

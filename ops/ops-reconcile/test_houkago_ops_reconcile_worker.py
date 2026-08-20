@@ -95,7 +95,6 @@ class OpsReconcileWorkerTest(unittest.TestCase):
         self.server_env = self.root / "server.env"
         self.release_env = self.root / "release.env"
         self.server_env.write_text("SYNTHETIC=true\n", encoding="utf-8")
-        self.release_env.write_text("SYNTHETIC=true\n", encoding="utf-8")
 
         git(self.source, "init", "-b", "main")
         git(self.source, "config", "user.name", "Ops Worker Test")
@@ -113,9 +112,14 @@ class OpsReconcileWorkerTest(unittest.TestCase):
             maintenance_lock_timeout=1,
             install_root=self.install_root)
         self.seed_managed_files("old")
+        classifier_source = SCRIPT.parent.parent / "ci" / "classify_backend_changes.py"
+        classifier_target = self.source / "ops/ci/classify_backend_changes.py"
+        classifier_target.parent.mkdir(parents=True, exist_ok=True)
+        classifier_target.write_bytes(classifier_source.read_bytes())
         git(self.source, "add", ".")
         git(self.source, "commit", "-m", "old ops")
         self.old_revision = git(self.source, "rev-parse", "HEAD")
+        self.write_app_release(self.old_revision)
         git(self.source, "init", "--bare", str(self.remote))
         git(self.source, "remote", "add", "origin", str(self.remote))
         git(self.source, "push", "-u", "origin", "main")
@@ -195,6 +199,25 @@ class OpsReconcileWorkerTest(unittest.TestCase):
     def current_revision(self) -> str:
         return self.worker.load_state(self.worker.current_state_path)["revision"]
 
+    def write_app_release(self, revision: str) -> None:
+        self.release_env.write_text(
+            "HOUKAGO_SERVER_IMAGE=ghcr.io/hokago-memories/houkago.server@sha256:"
+            + "a" * 64
+            + f"\nHOUKAGO_SERVER_REVISION={revision}\n"
+            + "HOUKAGO_SERVER_SCHEMA_COMPATIBILITY=unchanged\n",
+            encoding="utf-8")
+
+    def commit_files(self, message: str, files: dict[str, str]) -> str:
+        for relative_path, content in files.items():
+            path = self.source / relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        git(self.source, "add", ".")
+        git(self.source, "commit", "-m", message)
+        revision = git(self.source, "rev-parse", "HEAD")
+        git(self.source, "push", "origin", "main")
+        return revision
+
     def test_success_installs_only_changed_allowlist_and_updates_separate_state(self):
         delivery_id, _ = self.write_job(self.worker.incoming)
 
@@ -217,6 +240,138 @@ class OpsReconcileWorkerTest(unittest.TestCase):
             "ops/systemd/houkago-ops-reconcile.service",
             "ops/ops-reconcile/houkago-ops-reconcile-worker",
         }, changed)
+
+    def test_historical_control_and_deployed_app_allow_managed_ops_install(self):
+        self.commit_files(
+            "control plane",
+            {".github/workflows/policy.yml": "name: policy\n"})
+        app_revision = self.commit_files(
+            "application",
+            {"src/main/java/example/App.java": "class App {}\n"})
+        target_revision = self.commit_files(
+            "operations follow-up",
+            {"ops/systemd/houkago-ops-reconcile.service": "staged ops service\n"})
+        self.write_app_release(app_revision)
+        delivery_id, _ = self.write_job(self.worker.incoming, target_revision)
+
+        self.assertEqual(0, self.worker.run())
+
+        self.assertTrue((self.worker.succeeded / f"{delivery_id}.json").is_file())
+        self.assertEqual(target_revision, self.current_revision())
+        self.assertIn(
+            "staged ops service",
+            self.config.installed(
+                "/etc/systemd/system/houkago-ops-reconcile.service").read_text())
+        self.assertFalse(self.config.installed("/.github/workflows/policy.yml").exists())
+        self.assertFalse(self.config.installed("/src/main/java/example/App.java").exists())
+
+    def test_cumulative_mixed_app_change_blocks_before_live_mutation(self):
+        self.commit_files(
+            "mixed",
+            {
+                "src/main/java/example/App.java": "class App {}\n",
+                "ops/systemd/houkago-ops-reconcile.service": "mixed ops service\n",
+            })
+        target_revision = self.commit_files(
+            "operations follow-up",
+            {"ops/systemd/houkago-ops-reconcile.service": "follow-up ops service\n"})
+        delivery_id, _ = self.write_job(self.worker.incoming, target_revision)
+        target = self.config.installed("/etc/systemd/system/houkago-ops-reconcile.service")
+        before = target.read_bytes()
+
+        self.assertEqual(1, self.worker.run())
+
+        self.assertTrue((self.worker.failed / f"{delivery_id}.json").is_file())
+        self.assertEqual(before, target.read_bytes())
+        self.assertEqual(self.old_revision, self.current_revision())
+        self.assertEqual(self.old_revision, git(self.server, "rev-parse", "HEAD"))
+        self.assertEqual([], list(self.backups.glob("*/manifest.json")))
+
+    def test_current_taxonomy_unknown_blocks_before_live_mutation(self):
+        self.commit_files(
+            "unknown",
+            {"unclassified/runtime.conf": "unknown\n"})
+        target_revision = self.commit_files(
+            "operations follow-up",
+            {"ops/systemd/houkago-ops-reconcile.service": "unknown follow-up\n"})
+        delivery_id, _ = self.write_job(self.worker.incoming, target_revision)
+        before = self.config.installed(
+            "/etc/systemd/system/houkago-ops-reconcile.service").read_bytes()
+
+        self.assertEqual(1, self.worker.run())
+
+        self.assertTrue((self.worker.failed / f"{delivery_id}.json").is_file())
+        self.assertEqual(
+            before,
+            self.config.installed(
+                "/etc/systemd/system/houkago-ops-reconcile.service").read_bytes())
+        self.assertEqual(self.old_revision, self.current_revision())
+
+    def test_cumulative_migration_blocks_ops_reconcile(self):
+        self.commit_files(
+            "migration",
+            {"src/main/resources/db/migration/V99__fixture.sql": "select 1;\n"})
+        target_revision = self.commit_files(
+            "operations follow-up",
+            {"ops/systemd/houkago-ops-reconcile.service": "migration follow-up\n"})
+        delivery_id, _ = self.write_job(self.worker.incoming, target_revision)
+
+        self.assertEqual(1, self.worker.run())
+
+        self.assertTrue((self.worker.failed / f"{delivery_id}.json").is_file())
+        self.assertEqual(self.old_revision, self.current_revision())
+        self.assertEqual(self.old_revision, git(self.server, "rev-parse", "HEAD"))
+
+    def test_invalid_app_release_state_blocks_ops_reconcile(self):
+        target_revision = self.commit_files(
+            "operations follow-up",
+            {"ops/systemd/houkago-ops-reconcile.service": "invalid state follow-up\n"})
+        self.release_env.write_text("invalid\n", encoding="utf-8")
+        delivery_id, _ = self.write_job(self.worker.incoming, target_revision)
+
+        self.assertEqual(1, self.worker.run())
+
+        self.assertTrue((self.worker.failed / f"{delivery_id}.json").is_file())
+        self.assertEqual(self.old_revision, self.current_revision())
+
+    def test_missing_app_release_state_blocks_ops_reconcile(self):
+        target_revision = self.commit_files(
+            "operations follow-up",
+            {"ops/systemd/houkago-ops-reconcile.service": "missing state follow-up\n"})
+        self.release_env.unlink()
+        delivery_id, _ = self.write_job(self.worker.incoming, target_revision)
+
+        self.assertEqual(1, self.worker.run())
+
+        self.assertTrue((self.worker.failed / f"{delivery_id}.json").is_file())
+        self.assertEqual(self.old_revision, self.current_revision())
+
+    def test_missing_app_revision_blocks_ops_reconcile(self):
+        target_revision = self.commit_files(
+            "operations follow-up",
+            {"ops/systemd/houkago-ops-reconcile.service": "missing revision follow-up\n"})
+        self.write_app_release("f" * 40)
+        delivery_id, _ = self.write_job(self.worker.incoming, target_revision)
+
+        self.assertEqual(1, self.worker.run())
+
+        self.assertTrue((self.worker.failed / f"{delivery_id}.json").is_file())
+        self.assertEqual(self.old_revision, self.current_revision())
+
+    def test_app_revision_ahead_of_target_blocks_ops_reconcile(self):
+        target_revision = self.commit_files(
+            "operations target",
+            {"ops/systemd/houkago-ops-reconcile.service": "ahead target\n"})
+        app_revision = self.commit_files(
+            "application ahead",
+            {"src/main/java/example/App.java": "class App {}\n"})
+        self.write_app_release(app_revision)
+        delivery_id, _ = self.write_job(self.worker.incoming, target_revision)
+
+        self.assertEqual(1, self.worker.run())
+
+        self.assertTrue((self.worker.failed / f"{delivery_id}.json").is_file())
+        self.assertEqual(self.old_revision, self.current_revision())
 
     def test_validation_failure_changes_no_live_file_or_state(self):
         delivery_id, _ = self.write_job(self.worker.incoming)
@@ -277,6 +432,14 @@ class OpsReconcileWorkerTest(unittest.TestCase):
         delivery_id, path = self.write_job(self.worker.incoming)
         lock_path = self.spool / "worker.lock"
         with lock_path.open("a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertEqual(0, self.worker.run())
+        self.assertTrue(path.is_file())
+        self.assertFalse((self.worker.processing / f"{delivery_id}.json").exists())
+
+    def test_maintenance_lock_contention_leaves_job_queued_before_state_read(self):
+        delivery_id, path = self.write_job(self.worker.incoming)
+        with self.config.maintenance_lock.open("a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.assertEqual(0, self.worker.run())
         self.assertTrue(path.is_file())

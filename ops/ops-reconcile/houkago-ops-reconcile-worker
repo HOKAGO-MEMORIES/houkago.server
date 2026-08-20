@@ -19,8 +19,10 @@ from pathlib import Path
 
 
 SHA_PATTERN = re.compile(r"[0-9a-f]{40}")
+IMAGE_PATTERN = re.compile(r"[^\s=]+@sha256:[0-9a-f]{64}")
 JOB_FIELDS = {"deliveryId", "revision", "receivedAt", "notBefore"}
 STATE_FIELDS = {"version", "revision", "recordedAt", "managedFiles"}
+CLASSIFIER_SOURCE = "ops/ci/classify_backend_changes.py"
 
 
 class ReconcileError(RuntimeError):
@@ -355,6 +357,176 @@ class OpsReconcileWorker:
         except subprocess.CalledProcessError as exception:
             raise ReconcileError("revision_not_fast_forward_main") from exception
 
+    def load_app_revision(self) -> str:
+        try:
+            lines = self.config.release_env.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as exception:
+            raise ReconcileError("invalid_app_release_state") from exception
+        values = {}
+        for line in lines:
+            if not line or line.startswith("#") or "=" not in line:
+                raise ReconcileError("invalid_app_release_state")
+            key, value = line.split("=", 1)
+            if key in values:
+                raise ReconcileError("invalid_app_release_state")
+            values[key] = value
+        expected = {
+            "HOUKAGO_SERVER_IMAGE",
+            "HOUKAGO_SERVER_REVISION",
+            "HOUKAGO_SERVER_SCHEMA_COMPATIBILITY",
+        }
+        revision = values.get("HOUKAGO_SERVER_REVISION", "")
+        image = values.get("HOUKAGO_SERVER_IMAGE", "")
+        if (set(values) != expected
+                or not SHA_PATTERN.fullmatch(revision)
+                or set(revision) == {"0"}
+                or not IMAGE_PATTERN.fullmatch(image)
+                or values["HOUKAGO_SERVER_SCHEMA_COMPATIBILITY"] != "unchanged"):
+            raise ReconcileError("invalid_app_release_state")
+        return revision
+
+    def materialize_target_classifier(self, target_revision: str, directory: Path) -> Path:
+        content = self.git_object(target_revision, CLASSIFIER_SOURCE)
+        if content is None:
+            raise ReconcileError("compatibility_classifier_missing")
+        try:
+            source = content.decode("utf-8")
+            compile(source, CLASSIFIER_SOURCE, "exec")
+        except (UnicodeError, SyntaxError) as exception:
+            raise ReconcileError("compatibility_classifier_invalid") from exception
+        path = directory / "classify_backend_changes.py"
+        path.write_text(source, encoding="utf-8")
+        path.chmod(0o700)
+        return path
+
+    def classify_range(
+            self,
+            classifier_path: Path,
+            base_revision: str,
+            target_revision: str) -> dict[str, object]:
+        environment = {
+            "PATH": "/usr/bin:/bin",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "safe.directory",
+            "GIT_CONFIG_VALUE_0": str(self.config.server_root),
+        }
+        try:
+            completed = self.run_command(
+                [
+                    sys.executable,
+                    str(classifier_path),
+                    "classify-range",
+                    "--repository", str(self.config.server_root),
+                    "--base", base_revision,
+                    "--head", target_revision,
+                ],
+                capture=True,
+                environment=environment)
+            result = json.loads(completed.stdout.decode("utf-8"))
+        except (subprocess.CalledProcessError, UnicodeError, json.JSONDecodeError) as exception:
+            raise ReconcileError("compatibility_classifier_failed") from exception
+        required = {
+            "head_sha": str,
+            "base_sha": str,
+            "classification": str,
+            "app_changed": bool,
+            "ops_changed": bool,
+            "control_plane_changed": bool,
+            "migration_changed": bool,
+            "changed_paths": list,
+            "unknown_paths": list,
+            "blocked_reason": str,
+        }
+        classifications = {
+            "APP_ONLY",
+            "OPS_ONLY",
+            "APP_AND_OPS",
+            "NO_PRODUCTION_IMPACT",
+            "CONTROL_PLANE",
+        }
+        if (not isinstance(result, dict)
+                or set(result) != set(required)
+                or any(not isinstance(result[field], expected)
+                       for field, expected in required.items())
+                or result["base_sha"] != base_revision
+                or result["head_sha"] != target_revision
+                or result["classification"] not in classifications
+                or not all(isinstance(path, str) and path for path in result["changed_paths"])
+                or not all(isinstance(path, str) and path for path in result["unknown_paths"])
+                or (result["migration_changed"] and not result["app_changed"])
+                or (result["unknown_paths"] and not result["control_plane_changed"])):
+            raise ReconcileError("compatibility_classifier_invalid_output")
+        return result
+
+    def log_compatibility(
+            self,
+            *,
+            base_revision: str,
+            target_revision: str,
+            result: dict[str, object],
+            decision: str,
+            reason: str,
+            scope: str) -> None:
+        unknown = result["unknown_paths"]
+        assert isinstance(unknown, list)
+        log(
+            phase="compatibility_gate",
+            lane="ops",
+            scope=scope,
+            oppositeRevision=base_revision[:12],
+            targetRevision=target_revision[:12],
+            appChanged=str(result["app_changed"]).lower(),
+            opsChanged=str(result["ops_changed"]).lower(),
+            controlPlaneChanged=str(result["control_plane_changed"]).lower(),
+            migrationChanged=str(result["migration_changed"]).lower(),
+            unknownCount=len(unknown),
+            result=decision,
+            reason=reason)
+
+    def verify_cross_release_compatibility(
+            self,
+            app_revision: str,
+            current_ops_revision: str,
+            target_revision: str) -> None:
+        with tempfile.TemporaryDirectory(prefix="compatibility-", dir=self.temporary) as directory:
+            classifier_path = self.materialize_target_classifier(target_revision, Path(directory))
+            compatibility = self.classify_range(classifier_path, app_revision, target_revision)
+            reason = "none"
+            if compatibility["blocked_reason"]:
+                reason = f"invalid_range_{compatibility['blocked_reason']}"
+            elif compatibility["unknown_paths"]:
+                reason = "unknown_path"
+            elif compatibility["migration_changed"]:
+                reason = "unapplied_migration"
+            elif compatibility["app_changed"]:
+                reason = "unapplied_app_runtime_change"
+            self.log_compatibility(
+                base_revision=app_revision,
+                target_revision=target_revision,
+                result=compatibility,
+                decision="ALLOW" if reason == "none" else "BLOCK",
+                reason=reason,
+                scope="runtime")
+            if reason != "none":
+                raise ReconcileError(f"cross_release_{reason}")
+
+            install_range = self.classify_range(
+                classifier_path, current_ops_revision, target_revision)
+            install_reason = "none"
+            if install_range["blocked_reason"]:
+                install_reason = f"invalid_range_{install_range['blocked_reason']}"
+            elif install_range["unknown_paths"]:
+                install_reason = "unknown_path"
+            self.log_compatibility(
+                base_revision=current_ops_revision,
+                target_revision=target_revision,
+                result=install_range,
+                decision="ALLOW" if install_reason == "none" else "BLOCK",
+                reason=install_reason,
+                scope="install")
+            if install_reason != "none":
+                raise ReconcileError(f"ops_install_{install_reason}")
+
     def changed_managed_files(self, current_revision: str, target_revision: str) -> tuple[ManagedFile, ...]:
         try:
             changed = set(self.git_output(
@@ -590,6 +762,9 @@ class OpsReconcileWorker:
                 return True
 
             self.verify_revision(current_revision, target_revision)
+            app_revision = self.load_app_revision()
+            self.verify_cross_release_compatibility(
+                app_revision, current_revision, target_revision)
             changed = self.changed_managed_files(current_revision, target_revision)
             if not changed:
                 raise ReconcileError("no_managed_ops_change")

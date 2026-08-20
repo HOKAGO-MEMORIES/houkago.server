@@ -12,6 +12,7 @@ readonly SERVER_ROOT_FIXTURE="${TEMPORARY_ROOT}/server"
 readonly SERVER_ENV_FIXTURE="${TEMPORARY_ROOT}/server.env"
 readonly RELEASE_ENV_FIXTURE="${TEMPORARY_ROOT}/backend-release.env"
 readonly PREVIOUS_RELEASE_ENV_FIXTURE="${STATE_ROOT_FIXTURE}/previous-release.env"
+readonly OPS_STATE_FILE_FIXTURE="${TEMPORARY_ROOT}/ops-current.json"
 readonly MAINTENANCE_LOCK_FIXTURE="${TEMPORARY_ROOT}/backend-maintenance.lock"
 readonly WORKER_ENV_FIXTURE="${TEMPORARY_ROOT}/backend-deploy-worker.env"
 readonly IMAGE_REPOSITORY_FIXTURE="ghcr.io/hokago-memories/houkago.server"
@@ -51,6 +52,13 @@ EOF
 	chmod 0644 "$path"
 }
 
+write_ops_state() {
+	local revision="$1"
+	printf '{"managedFiles":{},"recordedAt":"2026-08-13T00:00:00Z","revision":"%s","version":1}\n' \
+		"$revision" > "$OPS_STATE_FILE_FIXTURE"
+	chmod 0600 "$OPS_STATE_FILE_FIXTURE"
+}
+
 write_job() {
 	local directory="$1" delivery_id="$2" revision="$3" image="$4"
 	cat > "${directory}/${delivery_id}.json" <<EOF
@@ -78,6 +86,7 @@ done
 : > "$WORKER_ENV_FIXTURE"
 printf 'services: {}\n' > "${SERVER_ROOT_FIXTURE}/compose.prod.yml"
 write_release "$RELEASE_ENV_FIXTURE" "$OLD_IMAGE" "$OLD_REVISION"
+write_ops_state "$OLD_REVISION"
 
 export HOUKAGO_DEPLOY_WORKER_ENV_FILE="$WORKER_ENV_FIXTURE"
 export HOUKAGO_DEPLOY_SPOOL_ROOT="$SPOOL_ROOT_FIXTURE"
@@ -86,6 +95,7 @@ export HOUKAGO_SERVER_ROOT="$SERVER_ROOT_FIXTURE"
 export HOUKAGO_SERVER_ENV="$SERVER_ENV_FIXTURE"
 export HOUKAGO_RELEASE_ENV="$RELEASE_ENV_FIXTURE"
 export HOUKAGO_PREVIOUS_RELEASE_ENV="$PREVIOUS_RELEASE_ENV_FIXTURE"
+export HOUKAGO_OPS_STATE_FILE="$OPS_STATE_FILE_FIXTURE"
 export HOUKAGO_MAINTENANCE_LOCK_FILE="$MAINTENANCE_LOCK_FIXTURE"
 export HOUKAGO_MAINTENANCE_LOCK_TIMEOUT_SECONDS=1
 export HOUKAGO_DEPLOY_STARTUP_ATTEMPTS=1
@@ -137,6 +147,8 @@ test_successful_deploy_and_response_grace_order() (
 	wait_until_not_before() {
 		log "phase=request_grace status=COMPLETE receivedAt=$1 notBefore=$2 readyAt=2026-08-13T00:00:06Z"
 	}
+	load_ops_revision() { printf '%s\n' "$OLD_REVISION"; }
+	verify_cross_release_compatibility() { return 0; }
 	verify_migration_gate() { return 0; }
 	verify_artifact() { return 0; }
 	verify_compose_resolution() { [[ "$2" == "$NEW_IMAGE" ]]; }
@@ -163,6 +175,8 @@ test_same_release_is_noop() (
 	reset_spool
 	write_job "$INCOMING_DIRECTORY" "$delivery_id" "$OLD_REVISION" "$OLD_IMAGE"
 	wait_until_not_before() { return 0; }
+	load_ops_revision() { fail "same release read Ops state"; }
+	verify_cross_release_compatibility() { fail "same release checked compatibility"; }
 	verify_migration_gate() { fail "same release checked migrations"; }
 	verify_artifact() { fail "same release pulled an artifact"; }
 	verify_compose_resolution() { fail "same release resolved Compose"; }
@@ -185,6 +199,8 @@ test_migration_gate_is_fail_closed() (
 	reset_spool
 	write_job "$INCOMING_DIRECTORY" "$delivery_id" "$NEW_REVISION" "$NEW_IMAGE"
 	wait_until_not_before() { return 0; }
+	load_ops_revision() { printf '%s\n' "$OLD_REVISION"; }
+	verify_cross_release_compatibility() { return 0; }
 	verify_migration_gate() { return 2; }
 	verify_artifact() { fail "migration-gated job pulled an artifact"; }
 	recreate_app() { : > "$recreate_marker"; }
@@ -205,6 +221,8 @@ test_health_failure_rolls_back_without_changing_release() (
 	write_job "$INCOMING_DIRECTORY" "$delivery_id" "$NEW_REVISION" "$NEW_IMAGE"
 	printf '0\n' > "$call_count_file"
 	wait_until_not_before() { return 0; }
+	load_ops_revision() { printf '%s\n' "$OLD_REVISION"; }
+	verify_cross_release_compatibility() { return 0; }
 	verify_migration_gate() { return 0; }
 	verify_artifact() { return 0; }
 	verify_compose_resolution() { return 0; }
@@ -223,6 +241,71 @@ test_health_failure_rolls_back_without_changing_release() (
 	assert_file "${FAILED_DIRECTORY}/${delivery_id}.json"
 	assert_equals "2" "$(cat "$call_count_file")" "candidate plus rollback recreate count"
 	assert_equals "$OLD_IMAGE" "$(validate_release_env "$RELEASE_ENV" | sed -n '1p')" "release after rollback"
+)
+
+test_compatibility_block_has_no_deployment_side_effect() (
+	local delivery_id="12121212-1212-4212-8212-121212121212"
+	write_release "$RELEASE_ENV" "$OLD_IMAGE" "$OLD_REVISION"
+	rm -f -- "$PREVIOUS_RELEASE_ENV"
+	reset_spool
+	write_job "$INCOMING_DIRECTORY" "$delivery_id" "$NEW_REVISION" "$NEW_IMAGE"
+	wait_until_not_before() { return 0; }
+	load_ops_revision() { printf '%s\n' "$OLD_REVISION"; }
+	verify_cross_release_compatibility() { return 3; }
+	verify_migration_gate() { fail "blocked job checked migrations"; }
+	verify_artifact() { fail "blocked job pulled an artifact"; }
+	verify_compose_resolution() { fail "blocked job resolved Compose"; }
+	recreate_app() { fail "blocked job recreated app"; }
+
+	if process_job "${INCOMING_DIRECTORY}/${delivery_id}.json" >/dev/null; then
+		fail "compatibility-blocked job succeeded"
+	fi
+	assert_file "${FAILED_DIRECTORY}/${delivery_id}.json"
+	assert_equals "$OLD_IMAGE" "$(validate_release_env "$RELEASE_ENV" | sed -n '1p')" "blocked current image"
+	assert_equals "$OLD_REVISION" "$(validate_release_env "$RELEASE_ENV" | sed -n '2p')" "blocked current revision"
+	[[ ! -e "$PREVIOUS_RELEASE_ENV" ]] || fail "blocked job changed previous release state"
+)
+
+test_invalid_ops_state_has_no_deployment_side_effect() (
+	local delivery_id="13131313-1313-4313-8313-131313131313"
+	write_release "$RELEASE_ENV" "$OLD_IMAGE" "$OLD_REVISION"
+	reset_spool
+	write_job "$INCOMING_DIRECTORY" "$delivery_id" "$NEW_REVISION" "$NEW_IMAGE"
+	wait_until_not_before() { return 0; }
+	load_ops_revision() { return 1; }
+	verify_cross_release_compatibility() { fail "invalid Ops state reached compatibility gate"; }
+	verify_artifact() { fail "invalid Ops state pulled an artifact"; }
+	recreate_app() { fail "invalid Ops state recreated app"; }
+
+	if process_job "${INCOMING_DIRECTORY}/${delivery_id}.json" >/dev/null; then
+		fail "invalid Ops state job succeeded"
+	fi
+	assert_file "${FAILED_DIRECTORY}/${delivery_id}.json"
+	assert_equals "$OLD_REVISION" "$(validate_release_env "$RELEASE_ENV" | sed -n '2p')" "invalid state current revision"
+)
+
+test_ops_state_validation_contract() (
+	write_ops_state "$OLD_REVISION"
+	assert_equals "$OLD_REVISION" "$(load_ops_revision)" "valid Ops state revision"
+
+	rm -f -- "$OPS_STATE_FILE"
+	if load_ops_revision >/dev/null 2>&1; then
+		fail "missing Ops state was accepted"
+	fi
+
+	printf '{"managedFiles":{},"recordedAt":"2026-08-13T00:00:00Z","revision":"bad","version":1}\n' \
+		> "$OPS_STATE_FILE"
+	if load_ops_revision >/dev/null 2>&1; then
+		fail "malformed Ops revision was accepted"
+	fi
+
+	printf '{"managedFiles":{"compose.prod.yml":{"target":"","sha256":"bad"}},"recordedAt":"2026-08-13T00:00:00Z","revision":"%s","version":1}\n' \
+		"$OLD_REVISION" > "$OPS_STATE_FILE"
+	if load_ops_revision >/dev/null 2>&1; then
+		fail "malformed Ops managed file state was accepted"
+	fi
+
+	write_ops_state "$OLD_REVISION"
 )
 
 test_release_state_failure_restores_app_and_state() (
@@ -269,6 +352,7 @@ test_maintenance_lock_contention_keeps_job_queued() (
 	reset_spool
 	write_job "$INCOMING_DIRECTORY" "$delivery_id" "$NEW_REVISION" "$NEW_IMAGE"
 	wait_until_not_before() { return 0; }
+	load_ops_revision() { fail "contended job read Ops state"; }
 	flock_mode=busy
 	process_job "${INCOMING_DIRECTORY}/${delivery_id}.json" >/dev/null \
 		|| fail "lock contention should leave a queued job"
@@ -324,6 +408,8 @@ test_service_security_contract() {
 		|| fail "server secrets must remain read-only"
 	grep -Eq '^ReadOnlyPaths=.* /opt/houkago/env/backend-deploy-worker\.env([[:space:]]|$)' "$SERVICE_UNIT" \
 		|| fail "deploy worker secrets must remain read-only"
+	grep -Eq '^ReadOnlyPaths=.* /opt/houkago/ops-state/current\.json([[:space:]]|$)' "$SERVICE_UNIT" \
+		|| fail "Ops release state must remain read-only"
 	grep -Eq '^ReadWritePaths=.* /opt/houkago/server/\.git([[:space:]]|$)' "$SERVICE_UNIT" \
 		|| fail "server Git metadata must be writable for the migration gate fetch"
 	grep -Eq '^ReadOnlyPaths=/opt/houkago/server([[:space:]]|$)' "$SERVICE_UNIT" \
@@ -351,11 +437,95 @@ test_compose_resolution_requires_shared_asset_sync_image() (
 	fi
 )
 
+test_cross_release_classifier_contract() (
+	local remote="${TEMPORARY_ROOT}/compatibility-remote.git"
+	local base control target_app mixed target_block unknown target_unknown local_target
+	local classifier_source="${SCRIPT_DIRECTORY}/../ci/classify_backend_changes.py"
+
+	rm -rf -- "$SERVER_ROOT"
+	git init -q -b main "$SERVER_ROOT"
+	git -C "$SERVER_ROOT" config user.name "Deploy Worker Test"
+	git -C "$SERVER_ROOT" config user.email "deploy-worker@example.invalid"
+	mkdir -p "${SERVER_ROOT}/ops/ci"
+	cp -- "$classifier_source" "${SERVER_ROOT}/ops/ci/classify_backend_changes.py"
+	printf 'services: {}\n' > "${SERVER_ROOT}/compose.prod.yml"
+	git -C "$SERVER_ROOT" add .
+	git -C "$SERVER_ROOT" commit -qm base
+	base="$(git -C "$SERVER_ROOT" rev-parse HEAD)"
+	git init -q --bare "$remote"
+	git -C "$SERVER_ROOT" remote add origin "$remote"
+	git -C "$SERVER_ROOT" push -q -u origin main
+
+	mkdir -p "${SERVER_ROOT}/.github/workflows"
+	printf 'name: policy\n' > "${SERVER_ROOT}/.github/workflows/policy.yml"
+	git -C "$SERVER_ROOT" add .
+	git -C "$SERVER_ROOT" commit -qm control
+	control="$(git -C "$SERVER_ROOT" rev-parse HEAD)"
+	mkdir -p "${SERVER_ROOT}/src/main/java/example"
+	printf 'class App {}\n' > "${SERVER_ROOT}/src/main/java/example/App.java"
+	git -C "$SERVER_ROOT" add .
+	git -C "$SERVER_ROOT" commit -qm app
+	target_app="$(git -C "$SERVER_ROOT" rev-parse HEAD)"
+	git -C "$SERVER_ROOT" push -q origin main
+	git -C "$SERVER_ROOT" fetch -q origin main
+	verify_cross_release_compatibility "$base" "$target_app" \
+		|| fail "historical control-plane blocked App progression"
+
+	printf 'services: {app: {}}\n' > "${SERVER_ROOT}/compose.prod.yml"
+	printf 'class App { int version = 2; }\n' > "${SERVER_ROOT}/src/main/java/example/App.java"
+	git -C "$SERVER_ROOT" add .
+	git -C "$SERVER_ROOT" commit -qm mixed
+	mixed="$(git -C "$SERVER_ROOT" rev-parse HEAD)"
+	printf 'class App { int version = 3; }\n' > "${SERVER_ROOT}/src/main/java/example/App.java"
+	git -C "$SERVER_ROOT" add .
+	git -C "$SERVER_ROOT" commit -qm app-follow-up
+	target_block="$(git -C "$SERVER_ROOT" rev-parse HEAD)"
+	git -C "$SERVER_ROOT" push -q origin main
+	git -C "$SERVER_ROOT" fetch -q origin main
+	if verify_cross_release_compatibility "$target_app" "$target_block" >/dev/null; then
+		fail "cumulative mixed Ops change was allowed"
+	fi
+
+	mkdir -p "${SERVER_ROOT}/unclassified"
+	printf 'unknown\n' > "${SERVER_ROOT}/unclassified/runtime.conf"
+	git -C "$SERVER_ROOT" add .
+	git -C "$SERVER_ROOT" commit -qm unknown
+	unknown="$(git -C "$SERVER_ROOT" rev-parse HEAD)"
+	printf 'class App { int version = 4; }\n' > "${SERVER_ROOT}/src/main/java/example/App.java"
+	git -C "$SERVER_ROOT" add .
+	git -C "$SERVER_ROOT" commit -qm app-after-unknown
+	target_unknown="$(git -C "$SERVER_ROOT" rev-parse HEAD)"
+	git -C "$SERVER_ROOT" push -q origin main
+	git -C "$SERVER_ROOT" fetch -q origin main
+	if verify_cross_release_compatibility "$target_block" "$target_unknown" >/dev/null; then
+		fail "current-taxonomy unknown path was allowed"
+	fi
+	if verify_cross_release_compatibility "$(printf 'f%.0s' {1..40})" "$target_unknown" >/dev/null 2>&1; then
+		fail "missing opposite revision was allowed"
+	fi
+	if verify_cross_release_compatibility "$target_unknown" "$target_block" >/dev/null 2>&1; then
+		fail "non-ancestor opposite revision was allowed"
+	fi
+
+	printf 'class App { int version = 5; }\n' > "${SERVER_ROOT}/src/main/java/example/App.java"
+	git -C "$SERVER_ROOT" add .
+	git -C "$SERVER_ROOT" commit -qm non-main-app
+	local_target="$(git -C "$SERVER_ROOT" rev-parse HEAD)"
+	if verify_cross_release_compatibility "$target_unknown" "$local_target" >/dev/null 2>&1; then
+		fail "non-main target revision was allowed"
+	fi
+
+	[[ -n "$control" && -n "$mixed" && -n "$unknown" ]] || fail "compatibility fixture revisions missing"
+)
+
 test_job_validation
 test_successful_deploy_and_response_grace_order
 test_same_release_is_noop
 test_migration_gate_is_fail_closed
 test_health_failure_rolls_back_without_changing_release
+test_compatibility_block_has_no_deployment_side_effect
+test_invalid_ops_state_has_no_deployment_side_effect
+test_ops_state_validation_contract
 test_release_state_failure_restores_app_and_state
 test_maintenance_lock_contention_keeps_job_queued
 test_cleanup_recovers_processing_job
@@ -363,5 +533,6 @@ test_main_drains_multiple_jobs_in_order
 test_manual_rollback_swaps_release_state
 test_service_security_contract
 test_compose_resolution_requires_shared_asset_sync_image
+test_cross_release_classifier_contract
 
 printf 'All backend deploy worker tests passed.\n'
