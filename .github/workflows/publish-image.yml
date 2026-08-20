@@ -6,30 +6,229 @@ on:
       - Backend CI
     types:
       - completed
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: Successful Backend CI run ID for the exact main revision
+        required: true
+        type: string
+      confirm_application_deploy:
+        description: Publish and deploy an application change that has no operations changes
+        required: true
+        default: false
+        type: boolean
 
 permissions:
+  actions: read
   contents: read
-  packages: write
 
 concurrency:
-  group: backend-image-${{ github.event.workflow_run.head_sha }}
+  group: backend-image-${{ github.event.workflow_run.head_sha || inputs.ci_run_id }}
   cancel-in-progress: false
 
 jobs:
+  evaluate:
+    name: Evaluate Application Deployment
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && inputs.confirm_application_deploy == true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      ci_run_id: ${{ steps.source.outputs.ci_run_id }}
+      head_sha: ${{ steps.source.outputs.head_sha }}
+      classification: ${{ steps.classification.outputs.classification }}
+      app_changed: ${{ steps.classification.outputs.app_changed }}
+      ops_changed: ${{ steps.classification.outputs.ops_changed }}
+      decision: ${{ steps.decision.outputs.decision }}
+    steps:
+      - name: Resolve verified Backend CI run
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          AUTOMATIC_CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          AUTOMATIC_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          MANUAL_CI_RUN_ID: ${{ inputs.ci_run_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            ci_run_id="$AUTOMATIC_CI_RUN_ID"
+            head_sha="$AUTOMATIC_HEAD_SHA"
+            manual_override=false
+          else
+            printf '%s' "$MANUAL_CI_RUN_ID" | grep -Eq '^[1-9][0-9]*$'
+            run_json="$RUNNER_TEMP/backend-ci-run.json"
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${MANUAL_CI_RUN_ID}" \
+              > "$run_json"
+            head_sha="$(python3 - "$run_json" "$GITHUB_REPOSITORY" <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+
+          run = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          repository = sys.argv[2]
+          if run.get("name") != "Backend CI":
+              raise SystemExit("Selected run is not Backend CI")
+          if run.get("status") != "completed" or run.get("conclusion") != "success":
+              raise SystemExit("Selected Backend CI run did not complete successfully")
+          if run.get("event") not in {"push", "workflow_dispatch"}:
+              raise SystemExit("Selected Backend CI run event is not deployable")
+          if run.get("head_branch") != "main":
+              raise SystemExit("Selected Backend CI run is not for main")
+          if (run.get("head_repository") or {}).get("full_name") != repository:
+              raise SystemExit("Selected Backend CI run belongs to another repository")
+          head_sha = run.get("head_sha", "")
+          if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+              raise SystemExit("Selected Backend CI run head SHA is invalid")
+          print(head_sha)
+          PY
+            )"
+            ci_run_id="$MANUAL_CI_RUN_ID"
+            manual_override=true
+          fi
+
+          {
+            echo "ci_run_id=$ci_run_id"
+            echo "head_sha=$head_sha"
+            echo "manual_override=$manual_override"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out verified revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.source.outputs.head_sha }}
+          fetch-depth: 0
+
+      - name: Verify target revision is on main
+        env:
+          TARGET_SHA: ${{ steps.source.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          git fetch --quiet origin main
+          git merge-base --is-ancestor "$TARGET_SHA" refs/remotes/origin/main
+
+      - name: Download Backend change classification
+        uses: actions/download-artifact@v8
+        with:
+          name: backend-change-classification
+          path: ${{ runner.temp }}/backend-change-classification
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.ci_run_id }}
+
+      - name: Validate Backend change classification
+        id: classification
+        env:
+          TARGET_SHA: ${{ steps.source.outputs.head_sha }}
+        run: |
+          python3 ops/ci/classify_backend_changes.py validate \
+            --artifact "$RUNNER_TEMP/backend-change-classification/classification.json" \
+            --expected-head "$TARGET_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Decide application deployment
+        id: decision
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CLASSIFICATION: ${{ steps.classification.outputs.classification }}
+          APP_CHANGED: ${{ steps.classification.outputs.app_changed }}
+          OPS_CHANGED: ${{ steps.classification.outputs.ops_changed }}
+          UNKNOWN_PATH_COUNT: ${{ steps.classification.outputs.unknown_path_count }}
+          BLOCKED_REASON: ${{ steps.classification.outputs.blocked_reason }}
+        run: |
+          set -euo pipefail
+          decision=BLOCK
+          reason=classification_blocks_automatic_application_deployment
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$APP_CHANGED" == "true" \
+                  && "$OPS_CHANGED" == "false" \
+                  && "$UNKNOWN_PATH_COUNT" == "0" \
+                  && "$BLOCKED_REASON" == "none" ]]; then
+              decision=ALLOW
+              reason=manual_verified_application_deployment
+            else
+              reason=manual_deployment_requires_known_app_change_without_ops_change
+            fi
+          else
+            case "$CLASSIFICATION" in
+              APP_ONLY)
+                decision=ALLOW
+                reason=application_runtime_changed
+                ;;
+              OPS_ONLY)
+                decision=SKIP
+                reason=ops_reconcile_is_not_automated_until_cd2
+                ;;
+              NO_PRODUCTION_IMPACT)
+                decision=SKIP
+                reason=no_application_runtime_files_changed
+                ;;
+              APP_AND_OPS)
+                decision=BLOCK
+                reason=mixed_deployment_orchestration_is_not_implemented
+                ;;
+              CONTROL_PLANE)
+                decision=BLOCK
+                reason=control_plane_or_unknown_change_requires_manual_review
+                ;;
+              *)
+                echo "Unknown classification: $CLASSIFICATION" >&2
+                exit 1
+                ;;
+            esac
+          fi
+
+          {
+            echo "decision=$decision"
+            echo "reason=$reason"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            printf "## Backend application deployment gate\n\n"
+            printf -- "- Classification: \`%s\`\n" "$CLASSIFICATION"
+            printf -- "- Decision: \`%s\`\n" "$decision"
+            printf -- "- Image publish: \`%s\`\n" "$([[ "$decision" == "ALLOW" ]] && echo PENDING || echo SKIPPED)"
+            printf -- "- Production app deploy: \`%s\`\n" "$([[ "$decision" == "ALLOW" ]] && echo PENDING || echo SKIPPED)"
+            printf -- "- Reason: \`%s\`\n" "$reason"
+            printf -- "- Unknown path count: \`%s\`\n" "$UNKNOWN_PATH_COUNT"
+            printf -- "- Fail-closed reason: \`%s\`\n" "$BLOCKED_REASON"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report classification gate failure
+        if: failure()
+        run: |
+          {
+            printf "## Backend application deployment gate\n\n"
+            printf -- "- Decision: \`BLOCKED\`\n"
+            printf -- "- Image publish: \`SKIPPED\`\n"
+            printf -- "- Production app deploy: \`SKIPPED\`\n"
+            printf -- "- Reason: classification artifact was missing, invalid, or mismatched.\n"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   publish:
     name: Publish ARM64 Image
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+    needs:
+      - evaluate
+    if: needs.evaluate.outputs.decision == 'ALLOW'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
     env:
       IMAGE_NAME: ghcr.io/hokago-memories/houkago.server
       IMAGE_SOURCE: https://github.com/HOKAGO-MEMORIES/houkago.server
-      IMAGE_TAG: sha-${{ github.event.workflow_run.head_sha }}
-      TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
+      IMAGE_TAG: sha-${{ needs.evaluate.outputs.head_sha }}
+      TARGET_SHA: ${{ needs.evaluate.outputs.head_sha }}
       TARGET_PLATFORM: linux/arm64
 
     steps:

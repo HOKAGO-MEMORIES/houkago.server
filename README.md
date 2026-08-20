@@ -15,8 +15,8 @@ That legacy setup is not the current MVP baseline.
 - The MVP supports manual full resync from a local `houkago.posts` checkout.
 - The implementation baseline is Spring Boot 3.x, Java 21, Gradle, MySQL, Flyway, and Actuator.
 - Production-like runtime will use Docker Compose, Nginx, the Spring Boot app, and MySQL.
-- Production releases use immutable GHCR ARM64 image digests; the deploy trigger remains a separate
-  rollout phase.
+- Production application releases use immutable GHCR ARM64 image digests. Backend CI runs for every
+  change, while automatic image publication and app deployment are limited to classified APP_ONLY changes.
 - `commit_hash` stores the `houkago.posts` Git commit used for a sync.
 - `checksum` tracks metadata plus `raw_body` changes during full resync.
 - `source_hash` is not part of the read model.
@@ -358,17 +358,16 @@ review. The single-app recreate path uses graceful Spring shutdown and a 30-seco
 grace, but a short 502 window remains possible; this is not a zero-downtime deployment design.
 
 The systemd path/service and worker sources live in `ops/systemd` and `ops/backend-deploy`. The
-Production path is enabled and the service remains an idle oneshot when the queue is empty. A
-same-release synthetic request verified HTTP `202` completion before Worker processing and completed
-as `already_current` without app recreation or release-state rotation. The Content Worker now uses
-the same canonical release env and shared maintenance lock; its temporary local-image compatibility
-guard is removed. The GitHub image-publish workflow does not call this endpoint yet; that Production
-trigger, a real new-revision deploy, and complete previous-release rollback E2E belong to the next
-rollout phase.
+Production path is enabled and the service remains an idle oneshot when the queue is empty. Verified
+APP_ONLY `main` revisions flow from Backend CI through immutable ARM64 image publication to this
+endpoint. OPS_ONLY and NO_PRODUCTION_IMPACT revisions stop after CI, while APP_AND_OPS and
+CONTROL_PLANE revisions are blocked from automatic Production deployment. Ops reconciliation is not
+automated until CD2.
 
 ## Verification
 
 ```bash
+python3 -m unittest ops/ci/test_classify_backend_changes.py -v
 ./gradlew test
 ./gradlew bootJar
 ```
@@ -381,7 +380,8 @@ The repository integration test requires Docker because it starts a MySQL Testco
 ## Not Implemented Yet
 
 - automatic Git commit hash lookup
-- GitHub image publish to Production deploy-trigger connection
+- Production ops reconciliation for OPS_ONLY changes
+- coordinated Production rollout for APP_AND_OPS changes
 - blue/green or multi-app zero-downtime deployment
 
 ## Reference Documentation

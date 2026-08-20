@@ -31,6 +31,81 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Test Backend change classifier
+        run: python3 -m unittest ops/ci/test_classify_backend_changes.py -v
+
+      - name: Classify Backend changes
+        id: classification
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CLASSIFICATION_DIRECTORY: ${{ runner.temp }}/backend-change-classification
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            push)
+              base_sha="$PUSH_BASE_SHA"
+              head_sha="$GITHUB_SHA"
+              ;;
+            pull_request)
+              base_sha="$PR_BASE_SHA"
+              head_sha="$PR_HEAD_SHA"
+              ;;
+            workflow_dispatch)
+              base_sha="$(git rev-parse "${GITHUB_SHA}^")"
+              head_sha="$GITHUB_SHA"
+              ;;
+            *)
+              echo "Unsupported Backend CI event: $EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+
+          mkdir -p "$CLASSIFICATION_DIRECTORY"
+          python3 ops/ci/classify_backend_changes.py classify \
+            --repository . \
+            --base "$base_sha" \
+            --head "$head_sha" \
+            --output "$CLASSIFICATION_DIRECTORY/classification.json" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Upload Backend change classification
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-change-classification
+          path: ${{ runner.temp }}/backend-change-classification/classification.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Summarize Backend change classification
+        env:
+          CLASSIFICATION: ${{ steps.classification.outputs.classification }}
+          APP_CHANGED: ${{ steps.classification.outputs.app_changed }}
+          OPS_CHANGED: ${{ steps.classification.outputs.ops_changed }}
+          CONTROL_PLANE_CHANGED: ${{ steps.classification.outputs.control_plane_changed }}
+          MIGRATION_CHANGED: ${{ steps.classification.outputs.migration_changed }}
+          BASE_SHA: ${{ steps.classification.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.classification.outputs.head_sha }}
+          UNKNOWN_PATH_COUNT: ${{ steps.classification.outputs.unknown_path_count }}
+          BLOCKED_REASON: ${{ steps.classification.outputs.blocked_reason }}
+        run: |
+          {
+            printf "## Backend change classification\n\n"
+            printf -- "- Classification: \`%s\`\n" "$CLASSIFICATION"
+            printf -- "- Base SHA: \`%s\`\n" "$BASE_SHA"
+            printf -- "- Head SHA: \`%s\`\n" "$HEAD_SHA"
+            printf -- "- Application changed: \`%s\`\n" "$APP_CHANGED"
+            printf -- "- Operations changed: \`%s\`\n" "$OPS_CHANGED"
+            printf -- "- Control plane changed: \`%s\`\n" "$CONTROL_PLANE_CHANGED"
+            printf -- "- Migration changed: \`%s\`\n" "$MIGRATION_CHANGED"
+            printf -- "- Unknown path count: \`%s\`\n" "$UNKNOWN_PATH_COUNT"
+            printf -- "- Fail-closed reason: \`%s\`\n" "$BLOCKED_REASON"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Java 21
         uses: actions/setup-java@v5
