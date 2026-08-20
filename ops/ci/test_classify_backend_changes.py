@@ -331,6 +331,60 @@ class BackendChangeClassifierTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "SHA mismatch"):
                 classifier.validate_artifact(artifact, "3" * 40)
 
+    def test_classify_range_cli_emits_worker_json_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = self.initialize_repository(Path(directory))
+            base = self.git(repository, "rev-parse", "HEAD")
+            head = self.commit_files(
+                repository,
+                "application",
+                {"src/main/java/example/App.java": "class App {}\n"},
+            )
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_DIRECTORY / "classify_backend_changes.py"),
+                    "classify-range",
+                    "--repository", str(repository),
+                    "--base", base,
+                    "--head", head,
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            result = json.loads(completed.stdout)
+
+            self.assertEqual("APP_ONLY", result["classification"])
+            self.assertEqual(base, result["base_sha"])
+            self.assertEqual(head, result["head_sha"])
+            self.assertTrue(result["app_changed"])
+            self.assertFalse(result["ops_changed"])
+            self.assertEqual([], result["unknown_paths"])
+            self.assertEqual("", result["blocked_reason"])
+
+    def test_classify_range_cli_preserves_fail_closed_range_reason(self):
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_DIRECTORY / "classify_backend_changes.py"),
+                "classify-range",
+                "--repository", str(REPOSITORY_ROOT),
+                "--base", "invalid",
+                "--head", "2" * 40,
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        result = json.loads(completed.stdout)
+
+        self.assertEqual("CONTROL_PLANE", result["classification"])
+        self.assertEqual("invalid_sha", result["blocked_reason"])
+
     def test_current_repository_paths_are_explicitly_classified(self):
         tracked_paths = self.git(REPOSITORY_ROOT, "ls-files").splitlines()
         tracked_paths.extend(

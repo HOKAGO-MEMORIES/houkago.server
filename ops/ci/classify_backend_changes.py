@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -171,6 +172,11 @@ def write_json_atomic(output: Path, result: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def write_json_stream(result: dict) -> None:
+    json.dump(result, sys.stdout, sort_keys=True, separators=(",", ":"))
+    sys.stdout.write("\n")
+
+
 def validate_artifact(artifact: Path, expected_head: str) -> dict:
     try:
         result = json.loads(artifact.read_text(encoding="utf-8"))
@@ -248,6 +254,11 @@ def main() -> int:
     classify_parser.add_argument("--output", type=Path, required=True)
     classify_parser.add_argument("--github-output", type=Path)
 
+    range_parser = subparsers.add_parser("classify-range")
+    range_parser.add_argument("--repository", type=Path, default=Path.cwd())
+    range_parser.add_argument("--base", required=True)
+    range_parser.add_argument("--head", required=True)
+
     validate_parser = subparsers.add_parser("validate")
     validate_parser.add_argument("--artifact", type=Path, required=True)
     validate_parser.add_argument("--expected-head", required=True)
@@ -255,12 +266,15 @@ def main() -> int:
 
     arguments = parser.parse_args()
     try:
-        if arguments.command == "classify":
+        if arguments.command in {"classify", "classify-range"}:
             result = classify_repository(arguments.repository.resolve(), arguments.base, arguments.head)
-            write_json_atomic(arguments.output, result)
+            if arguments.command == "classify":
+                write_json_atomic(arguments.output, result)
+            else:
+                write_json_stream(result)
         else:
             result = validate_artifact(arguments.artifact, arguments.expected_head)
-        if arguments.github_output:
+        if getattr(arguments, "github_output", None):
             write_github_output(arguments.github_output, result)
     except ValueError as exception:
         parser.error(str(exception))
