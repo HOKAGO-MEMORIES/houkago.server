@@ -458,7 +458,10 @@ class OpsReconcileWorker:
                 raise ReconcileError("managed_file_deletion_requires_manual_review")
             atomic_install(source, item.target, item.mode)
 
-    def validate_live(self, staged: dict[str, Path]) -> None:
+    def validate_live(
+            self,
+            staged: dict[str, Path],
+            changed: tuple[ManagedFile, ...] | None = None) -> None:
         for item in self.config.managed_files():
             staged_path = staged.get(item.source)
             if staged_path is None:
@@ -473,7 +476,8 @@ class OpsReconcileWorker:
                 for item in self.config.managed_files()
                 if item.target.is_file() and item.source in staged
             })
-            if any(item.kind == "nginx" for item in self.config.managed_files() if item.source in staged):
+            nginx_scope = changed if changed is not None else self.config.managed_files()
+            if any(item.kind == "nginx" for item in nginx_scope):
                 self.run_command(["nginx", "-t"])
         except ReconcileError:
             raise
@@ -599,7 +603,7 @@ class OpsReconcileWorker:
                 try:
                     self.ff_checkout(target_revision)
                     self.install_changed(changed, staged)
-                    self.validate_live(staged)
+                    self.validate_live(staged, changed)
                     self.apply_runtime_actions(changed)
                     new_state = self.build_state(target_revision, staged)
                     self.commit_state(new_state)
@@ -610,7 +614,8 @@ class OpsReconcileWorker:
                         self.previous_state_path.unlink(missing_ok=True)
                     else:
                         atomic_bytes(self.previous_state_path, old_previous, 0o600)
-                    self.validate_live(self.stage_revision(current_revision, Path(directory)))
+                    self.validate_live(
+                        self.stage_revision(current_revision, Path(directory)), changed)
                     self.apply_runtime_actions(changed)
                     raise
                 finally:

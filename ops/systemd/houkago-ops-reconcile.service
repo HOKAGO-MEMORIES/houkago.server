@@ -18,7 +18,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=read-only
 ProtectSystem=strict
-ReadWritePaths=/opt/houkago/deploy-jobs/ops /opt/houkago/ops-state /opt/houkago/backups/ops /opt/houkago/locks /opt/houkago/server /opt/houkago/runtime /usr/local/sbin /etc/systemd/system /etc/nginx/conf.d /etc/nginx/snippets
+ReadWritePaths=/opt/houkago/deploy-jobs/ops /opt/houkago/ops-state /opt/houkago/backups/ops /opt/houkago/locks /opt/houkago/server /opt/houkago/runtime /usr/local/sbin /etc/systemd/system /etc/nginx/conf.d /etc/nginx/snippets /run/nginx.pid /var/log/nginx
 ReadOnlyPaths=/opt/houkago/env/server.env /opt/houkago/env/backend-release.env /opt/houkago/env/ops-reconcile-worker.env
 
 [Install]

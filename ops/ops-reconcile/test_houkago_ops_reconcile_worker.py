@@ -44,7 +44,7 @@ class FixtureWorker(MODULE.OpsReconcileWorker):
         if "compose.prod.yml" not in staged:
             raise MODULE.ReconcileError("missing_managed_compose")
 
-    def validate_live(self, staged):
+    def validate_live(self, staged, changed=None):
         for item in self.config.managed_files():
             source = staged.get(item.source)
             if source is None:
@@ -61,6 +61,18 @@ class FixtureWorker(MODULE.OpsReconcileWorker):
             raise MODULE.WorkerInterrupted("synthetic_interrupt")
         if self.fail_after_install:
             raise MODULE.ReconcileError("synthetic_install_failure")
+
+
+class ValidationScopeWorker(MODULE.OpsReconcileWorker):
+    def __init__(self, config):
+        super().__init__(config)
+        self.commands = []
+
+    def validate_staged(self, staged):
+        pass
+
+    def run_command(self, arguments, **kwargs):
+        self.commands.append(arguments)
 
 
 class OpsReconcileWorkerTest(unittest.TestCase):
@@ -218,6 +230,19 @@ class OpsReconcileWorkerTest(unittest.TestCase):
         self.assertEqual(self.old_revision, self.current_revision())
         self.assertTrue((self.worker.failed / f"{delivery_id}.json").is_file())
         self.assertEqual(self.old_revision, git(self.server, "rev-parse", "HEAD"))
+
+    def test_live_nginx_validation_only_runs_for_nginx_changes(self):
+        worker = ValidationScopeWorker(self.config)
+        with tempfile.TemporaryDirectory(dir=self.spool / ".tmp") as directory:
+            staged = worker.stage_revision(self.old_revision, Path(directory))
+            workers = tuple(item for item in self.config.managed_files() if item.kind == "worker")
+            nginx = tuple(item for item in self.config.managed_files() if item.kind == "nginx")
+
+            worker.validate_live(staged, workers)
+            self.assertNotIn(["nginx", "-t"], worker.commands)
+
+            worker.validate_live(staged, nginx)
+            self.assertIn(["nginx", "-t"], worker.commands)
 
     def test_install_failure_restores_live_files_and_previous_state(self):
         delivery_id, _ = self.write_job(self.worker.incoming)
