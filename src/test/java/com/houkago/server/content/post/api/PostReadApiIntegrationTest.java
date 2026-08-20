@@ -2,7 +2,6 @@ package com.houkago.server.content.post.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -25,11 +24,14 @@ import org.testcontainers.mysql.MySQLContainer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import com.houkago.server.content.post.metadata.PostMetadataMapping;
 import com.houkago.server.content.post.policy.PostSourceStatus;
 import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
 import com.houkago.server.content.post.readmodel.PostReadModel;
+import com.houkago.server.content.post.readmodel.PostReadModelAssembler;
 import com.houkago.server.content.post.readmodel.PostReadModelRepository;
+import com.houkago.server.content.post.readmodel.PostReadModelTestFixture;
 
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
@@ -54,6 +56,9 @@ class PostReadApiIntegrationTest {
 
 	@Autowired
 	private PostReadModelRepository repository;
+
+	@Autowired
+	private PostReadModelAssembler assembler;
 
 	@BeforeEach
 	void setUp() {
@@ -648,83 +653,65 @@ class PostReadApiIntegrationTest {
 				.isEqualTo(HttpStatus.NOT_FOUND);
 	}
 
-	private static PostReadModel publicPost(String slug, LocalDate postDate, String rawBody) {
+	private PostReadModel publicPost(String slug, LocalDate postDate, String rawBody) {
 		PostReadModel post = post(slug, postDate, PostSourceStatus.PUBLISHED, PostSyncStatus.ACTIVE,
 				PostVisibility.PUBLIC);
-		post.setRawBody(rawBody);
-		return post;
+		return PostReadModelTestFixture.withRawBody(post, rawBody);
 	}
 
 	private static PostReadModel featured(PostReadModel post) {
-		post.setFeatured(true);
-		return post;
+		return PostReadModelTestFixture.withFeatured(post);
 	}
 
 	private static PostReadModel category(PostReadModel post, String category) {
-		post.setCategory(category);
-		return post;
+		return PostReadModelTestFixture.withCategory(post, category);
 	}
 
 	private static PostReadModel title(PostReadModel post, String title) {
-		post.setTitle(title);
-		return post;
+		return PostReadModelTestFixture.withTitle(post, title);
 	}
 
 	private static PostReadModel description(PostReadModel post, String description) {
-		post.setDescription(description);
-		return post;
+		return PostReadModelTestFixture.withDescription(post, description);
 	}
 
 	private static PostReadModel rawBody(PostReadModel post, String rawBody) {
-		post.setRawBody(rawBody);
-		return post;
+		return PostReadModelTestFixture.withRawBody(post, rawBody);
 	}
 
-	private static PostReadModel tags(PostReadModel post, String... tags) throws Exception {
-		post.setTagsJson(new ObjectMapper().writeValueAsString(tags));
-		return post;
+	private static PostReadModel tags(PostReadModel post, String... tags) {
+		return PostReadModelTestFixture.withTags(post, tags);
 	}
 
-	private static PostReadModel post(
+	private PostReadModel post(
 			String slug,
 			LocalDate postDate,
 			PostSourceStatus sourceStatus,
 			PostSyncStatus syncStatus,
 			PostVisibility visibility) {
-		PostReadModel post = newPostReadModel();
-		post.setSlug(slug);
-		post.setTitle("Post " + slug);
-		post.setDescription("Description for " + slug);
-		post.setCategory("blog");
-		post.setTagsJson("[\"java\", \"spring\"]");
-		post.setPostDate(postDate);
-		post.setPostUpdatedDate(LocalDate.of(2026, 7, 5));
-		post.setThumbnail("./assets/thumbnail.png");
-		post.setSeries("Backend MVP");
-		post.setFeatured(false);
-		post.setPlatform(null);
-		post.setProblemId(null);
-		post.setSourceRepository("houkago.posts");
-		post.setSourcePath("blog/" + slug + "/index.md");
-		post.setSourceUrl(null);
-		post.setRawBody("raw body for " + slug);
-		post.setCommitHash("commit-" + slug);
-		post.setChecksum("checksum-" + slug);
-		post.setSourceStatus(sourceStatus);
-		post.setSyncStatus(syncStatus);
-		post.setVisibility(visibility);
-		post.setSyncedAt(SYNCED_AT);
-		return post;
-	}
-
-	private static PostReadModel newPostReadModel() {
-		try {
-			Constructor<PostReadModel> constructor = PostReadModel.class.getDeclaredConstructor();
-			constructor.setAccessible(true);
-			return constructor.newInstance();
-		} catch (ReflectiveOperationException exception) {
-			throw new IllegalStateException("Failed to create PostReadModel for test", exception);
-		}
+		PostMetadataMapping metadata = new PostMetadataMapping(
+				"Post " + slug,
+				slug,
+				postDate,
+				"Description for " + slug,
+				"blog",
+				sourceStatus,
+				syncStatus,
+				visibility,
+				List.of("java", "spring"),
+				LocalDate.of(2026, 7, 5),
+				"./assets/thumbnail.png",
+				"Backend MVP",
+				false,
+				null,
+				null);
+		return assembler.create(
+				metadata,
+				"raw body for " + slug,
+				"blog/" + slug + "/index.md",
+				"commit-" + slug,
+				"checksum-" + slug,
+				SYNCED_AT);
 	}
 
 	private static List<String> textValues(JsonNode arrayNode, String fieldName) {

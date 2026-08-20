@@ -3,6 +3,7 @@ package com.houkago.server.content.post;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
+import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,6 +16,8 @@ import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+
+import com.houkago.server.content.post.readmodel.PostReadModel;
 
 class PostPackageArchitectureTest {
 
@@ -76,6 +79,19 @@ class PostPackageArchitectureTest {
 						.isFalse();
 			}
 		}
+	}
+
+	@Test
+	void postReadModelMutationIsPackageControlledAndJpaConstructorIsProtected() throws NoSuchMethodException {
+		assertThat(PostReadModel.class.getDeclaredMethods())
+				.filteredOn(method -> method.getName().startsWith("set"))
+				.hasSize(22)
+				.allMatch(method -> !Modifier.isPublic(method.getModifiers())
+						&& !Modifier.isProtected(method.getModifiers())
+						&& !Modifier.isPrivate(method.getModifiers()));
+		assertThat(PostReadModel.class.getConstructors()).isEmpty();
+		assertThat(Modifier.isProtected(
+				PostReadModel.class.getDeclaredConstructor().getModifiers())).isTrue();
 	}
 
 	private static Map<String, Set<String>> packageDependencies() throws IOException {

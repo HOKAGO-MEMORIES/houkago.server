@@ -109,7 +109,7 @@ public class PostReadModel {
 		return slug;
 	}
 
-	public void setSlug(String slug) {
+	void setSlug(String slug) {
 		this.slug = slug;
 	}
 
@@ -117,7 +117,7 @@ public class PostReadModel {
 		return title;
 	}
 
-	public void setTitle(String title) {
+	void setTitle(String title) {
 		this.title = title;
 	}
 
@@ -125,7 +125,7 @@ public class PostReadModel {
 		return description;
 	}
 
-	public void setDescription(String description) {
+	void setDescription(String description) {
 		this.description = description;
 	}
 
@@ -133,7 +133,7 @@ public class PostReadModel {
 		return category;
 	}
 
-	public void setCategory(String category) {
+	void setCategory(String category) {
 		this.category = category;
 	}
 
@@ -141,7 +141,7 @@ public class PostReadModel {
 		return tagsJson;
 	}
 
-	public void setTagsJson(String tagsJson) {
+	void setTagsJson(String tagsJson) {
 		this.tagsJson = tagsJson;
 	}
 
@@ -149,7 +149,7 @@ public class PostReadModel {
 		return postDate;
 	}
 
-	public void setPostDate(LocalDate postDate) {
+	void setPostDate(LocalDate postDate) {
 		this.postDate = postDate;
 	}
 
@@ -157,7 +157,7 @@ public class PostReadModel {
 		return postUpdatedDate;
 	}
 
-	public void setPostUpdatedDate(LocalDate postUpdatedDate) {
+	void setPostUpdatedDate(LocalDate postUpdatedDate) {
 		this.postUpdatedDate = postUpdatedDate;
 	}
 
@@ -165,7 +165,7 @@ public class PostReadModel {
 		return thumbnail;
 	}
 
-	public void setThumbnail(String thumbnail) {
+	void setThumbnail(String thumbnail) {
 		this.thumbnail = thumbnail;
 	}
 
@@ -173,7 +173,7 @@ public class PostReadModel {
 		return series;
 	}
 
-	public void setSeries(String series) {
+	void setSeries(String series) {
 		this.series = series;
 	}
 
@@ -181,7 +181,7 @@ public class PostReadModel {
 		return featured;
 	}
 
-	public void setFeatured(boolean featured) {
+	void setFeatured(boolean featured) {
 		this.featured = featured;
 	}
 
@@ -189,7 +189,7 @@ public class PostReadModel {
 		return platform;
 	}
 
-	public void setPlatform(String platform) {
+	void setPlatform(String platform) {
 		this.platform = platform;
 	}
 
@@ -197,7 +197,7 @@ public class PostReadModel {
 		return problemId;
 	}
 
-	public void setProblemId(String problemId) {
+	void setProblemId(String problemId) {
 		this.problemId = problemId;
 	}
 
@@ -205,7 +205,7 @@ public class PostReadModel {
 		return sourceRepository;
 	}
 
-	public void setSourceRepository(String sourceRepository) {
+	void setSourceRepository(String sourceRepository) {
 		this.sourceRepository = sourceRepository;
 	}
 
@@ -213,7 +213,7 @@ public class PostReadModel {
 		return sourcePath;
 	}
 
-	public void setSourcePath(String sourcePath) {
+	void setSourcePath(String sourcePath) {
 		this.sourcePath = sourcePath;
 	}
 
@@ -221,7 +221,7 @@ public class PostReadModel {
 		return sourceUrl;
 	}
 
-	public void setSourceUrl(String sourceUrl) {
+	void setSourceUrl(String sourceUrl) {
 		this.sourceUrl = sourceUrl;
 	}
 
@@ -229,7 +229,7 @@ public class PostReadModel {
 		return rawBody;
 	}
 
-	public void setRawBody(String rawBody) {
+	void setRawBody(String rawBody) {
 		this.rawBody = rawBody;
 	}
 
@@ -237,7 +237,7 @@ public class PostReadModel {
 		return commitHash;
 	}
 
-	public void setCommitHash(String commitHash) {
+	void setCommitHash(String commitHash) {
 		this.commitHash = commitHash;
 	}
 
@@ -245,7 +245,7 @@ public class PostReadModel {
 		return checksum;
 	}
 
-	public void setChecksum(String checksum) {
+	void setChecksum(String checksum) {
 		this.checksum = checksum;
 	}
 
@@ -253,7 +253,7 @@ public class PostReadModel {
 		return sourceStatus;
 	}
 
-	public void setSourceStatus(PostSourceStatus sourceStatus) {
+	void setSourceStatus(PostSourceStatus sourceStatus) {
 		this.sourceStatus = sourceStatus;
 	}
 
@@ -261,7 +261,7 @@ public class PostReadModel {
 		return syncStatus;
 	}
 
-	public void setSyncStatus(PostSyncStatus syncStatus) {
+	void setSyncStatus(PostSyncStatus syncStatus) {
 		this.syncStatus = syncStatus;
 	}
 
@@ -269,7 +269,7 @@ public class PostReadModel {
 		return visibility;
 	}
 
-	public void setVisibility(PostVisibility visibility) {
+	void setVisibility(PostVisibility visibility) {
 		this.visibility = visibility;
 	}
 
@@ -285,7 +285,7 @@ public class PostReadModel {
 		return syncedAt;
 	}
 
-	public void setSyncedAt(Instant syncedAt) {
+	void setSyncedAt(Instant syncedAt) {
 		this.syncedAt = syncedAt;
 	}
 }
