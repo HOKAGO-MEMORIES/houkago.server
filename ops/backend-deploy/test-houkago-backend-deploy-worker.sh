@@ -332,6 +332,23 @@ test_service_security_contract() {
 	! grep -Eq '(^|[[:space:]])eval([[:space:]]|$)' "$WORKER_SCRIPT" || fail "worker must not eval payload"
 }
 
+test_compose_resolution_requires_shared_asset_sync_image() (
+	local asset_image="$NEW_IMAGE"
+	run_compose_with_release() {
+		[[ " $* " == *" --profile sync --profile asset-sync config --format json "* ]] \
+			|| fail "Compose resolution did not include both one-shot profiles"
+		printf '{"services":{"app":{"image":"%s"},"sync":{"image":"%s"},"asset-sync":{"image":"%s"}}}\n' \
+			"$NEW_IMAGE" "$NEW_IMAGE" "$asset_image"
+	}
+
+	verify_compose_resolution "$RELEASE_ENV" "$NEW_IMAGE" \
+		|| fail "matching app/sync/asset-sync images were rejected"
+	asset_image="$OLD_IMAGE"
+	if verify_compose_resolution "$RELEASE_ENV" "$NEW_IMAGE"; then
+		fail "mismatched asset-sync image was accepted"
+	fi
+)
+
 test_job_validation
 test_successful_deploy_and_response_grace_order
 test_same_release_is_noop
@@ -343,5 +360,6 @@ test_cleanup_recovers_processing_job
 test_main_drains_multiple_jobs_in_order
 test_manual_rollback_swaps_release_state
 test_service_security_contract
+test_compose_resolution_requires_shared_asset_sync_image
 
 printf 'All backend deploy worker tests passed.\n'

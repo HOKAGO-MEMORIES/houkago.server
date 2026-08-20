@@ -266,7 +266,7 @@ verify_compose_resolution() {
 	local release_path="$1"
 	local expected_image="$2"
 	local config_json
-	config_json="$(run_compose_with_release "$release_path" --profile sync config --format json)" || return 1
+	config_json="$(run_compose_with_release "$release_path" --profile sync --profile asset-sync config --format json)" || return 1
 	printf '%s' "$config_json" | python3 -c '
 import json
 import sys
@@ -277,6 +277,8 @@ services = config.get("services", {})
 if services.get("app", {}).get("image") != expected:
     raise SystemExit(1)
 if services.get("sync", {}).get("image") != expected:
+    raise SystemExit(1)
+if services.get("asset-sync", {}).get("image") != expected:
     raise SystemExit(1)
 ' "$expected_image"
 }

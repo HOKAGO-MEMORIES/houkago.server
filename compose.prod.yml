@@ -115,7 +115,22 @@ services:
       HOUKAGO_RESYNC_ENABLED: "true"
       HOUKAGO_RESYNC_POSTS_ROOT: ${HOUKAGO_RESYNC_POSTS_ROOT:-/workspace/houkago.posts}
       HOUKAGO_RESYNC_COMMIT_HASH: ${HOUKAGO_RESYNC_COMMIT_HASH:-}
-      HOUKAGO_ASSET_PUBLICATION_POSTS_ROOT: ${HOUKAGO_RESYNC_POSTS_ROOT:-/workspace/houkago.posts}
+      TZ: Asia/Seoul
+    volumes:
+      - type: bind
+        source: /opt/houkago/posts
+        target: ${HOUKAGO_RESYNC_POSTS_ROOT:-/workspace/houkago.posts}
+        read_only: true
+    networks:
+      - houkago-internal
+
+  asset-sync:
+    <<: *houkago-server-image
+    profiles:
+      - asset-sync
+    environment:
+      SPRING_PROFILES_ACTIVE: docker,asset-sync
+      HOUKAGO_ASSET_PUBLICATION_POSTS_ROOT: ${HOUKAGO_ASSET_PUBLICATION_POSTS_ROOT:-/workspace/houkago.posts}
       HOUKAGO_ASSET_PUBLICATION_ASSET_ROOT: ${HOUKAGO_PUBLIC_ASSET_ROOT:-/workspace/public-assets}
       HOUKAGO_ASSET_PUBLICATION_GENERATION_ID: ${HOUKAGO_ASSET_PUBLICATION_GENERATION_ID:-}
       HOUKAGO_ASSET_PUBLICATION_ACTION: ${HOUKAGO_ASSET_PUBLICATION_ACTION:-publish}
@@ -123,13 +138,12 @@ services:
     volumes:
       - type: bind
         source: /opt/houkago/posts
-        target: ${HOUKAGO_RESYNC_POSTS_ROOT:-/workspace/houkago.posts}
+        target: ${HOUKAGO_ASSET_PUBLICATION_POSTS_ROOT:-/workspace/houkago.posts}
         read_only: true
       - type: bind
         source: /opt/houkago/assets
         target: ${HOUKAGO_PUBLIC_ASSET_ROOT:-/workspace/public-assets}
-    networks:
-      - houkago-internal
+    network_mode: none
 
 networks:
   houkago-internal:

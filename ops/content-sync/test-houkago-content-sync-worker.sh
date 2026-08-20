@@ -160,7 +160,7 @@ test_checkout_umask_scope() {
 		"directory umask must remain restrictive outside Git"
 }
 
-test_readability_guard_uses_sync_service() {
+test_readability_guard_uses_asset_sync_service() {
 	local fake_bin="${TEMPORARY_ROOT}/fake-bin"
 	local docker_arguments="${TEMPORARY_ROOT}/docker-arguments"
 	local output
@@ -178,8 +178,8 @@ EOF
 	fi
 	[[ "$output" == *"HOUKAGO_UNREADABLE_PATH=algorithm/boj/2461/index.md"* ]] \
 		|| fail "readability guard did not preserve the failing relative path"
-	grep -Fq -- '--no-deps -T --entrypoint /bin/sh sync' "$docker_arguments" \
-		|| fail "readability guard did not use the sync service contract"
+	grep -Fq -- '--profile asset-sync run --rm --no-deps -T --entrypoint /bin/sh asset-sync' "$docker_arguments" \
+		|| fail "readability guard did not use the asset-sync service contract"
 	grep -Fq -- '-name ".*"' "$docker_arguments" \
 		|| fail "readability guard did not prune hidden directories"
 	grep -Fq -- '-name assets' "$docker_arguments" \
@@ -579,7 +579,7 @@ test_manual_revalidation_only_calls_endpoint() (
 	assert_file "$marker"
 )
 
-test_asset_commands_use_sync_contract() (
+test_asset_commands_use_dedicated_asset_sync_contract() (
 	local delivery_id="77777777-7777-4777-8777-777777777777"
 	local arguments_file="${TEMPORARY_ROOT}/asset-compose-arguments"
 
@@ -600,6 +600,9 @@ test_asset_commands_use_sync_contract() (
 	assert_equals "2" "$(grep -c '^CALL$' "$arguments_file")" "asset Compose call count"
 	assert_equals "2" "$(grep -c '^run$' "$arguments_file")" "asset commands must use Compose run"
 	assert_equals "2" "$(grep -c '^--rm$' "$arguments_file")" "asset commands must remove one-shot containers"
+	assert_equals "2" "$(grep -c '^--profile$' "$arguments_file")" "asset Compose profile count"
+	assert_equals "4" "$(grep -c '^asset-sync$' "$arguments_file")" \
+		"asset commands must select the asset-sync profile and service"
 	grep -Fxq 'HOUKAGO_ASSET_PUBLICATION_ACTION=stage' "$arguments_file" \
 		|| fail "asset stage action missing"
 	grep -Fxq 'HOUKAGO_ASSET_PUBLICATION_ACTION=activate' "$arguments_file" \
@@ -608,10 +611,35 @@ test_asset_commands_use_sync_contract() (
 		|| fail "asset generation must use the checked-out commit"
 	! grep -Eq '^(up|app|mysql)$' "$arguments_file" \
 		|| fail "asset commands must not recreate app or MySQL"
+	! grep -Fq 'SPRING_PROFILES_ACTIVE=' "$arguments_file" \
+		|| fail "asset commands must use the service profile contract without an override"
 	assert_equals "2" "$ASSET_PUBLIC_POST_COUNT" "parsed public post count"
 	assert_equals "1" "$ASSET_COUNT" "parsed asset count"
 	assert_equals "10" "$ASSET_TOTAL_BYTES" "parsed asset bytes"
 	assert_equals "/assets/posts/example-post/image.png" "$ASSET_SMOKE_PATH" "parsed smoke path"
+)
+
+test_database_sync_uses_sync_contract() (
+	local delivery_id="78787878-7878-4787-8787-787878787878"
+	local arguments_file="${TEMPORARY_ROOT}/database-compose-arguments"
+	local output
+
+	: > "$arguments_file"
+	run_compose() {
+		printf '%s\n' "$@" > "$arguments_file"
+		printf 'status=SUCCESS commitHash=%s CREATED=0 UPDATED=0 TOUCHED=1 DELETED=0\n' "$SHA"
+	}
+
+	output="$(run_one_shot_sync "$delivery_id" "$SHA")" \
+		|| fail "database sync contract unexpectedly failed"
+	grep -Fxq -- '--profile' "$arguments_file" || fail "database sync profile option missing"
+	assert_equals "2" "$(grep -c '^sync$' "$arguments_file")" \
+		"database sync must select the sync profile and service"
+	! grep -Fxq 'asset-sync' "$arguments_file" \
+		|| fail "database sync must not use the asset-sync boundary"
+	[[ "$output" == *"phase=db_sync status=STARTED service=sync"* \
+		&& "$output" == *"phase=db_sync status=SUCCESS service=sync"* ]] \
+		|| fail "database sync boundary was not logged"
 )
 
 prepare_asset_smoke_fixture() {
@@ -864,7 +892,7 @@ test_activation_failure_operator_retry_recovers() (
 )
 
 test_checkout_umask_scope
-test_readability_guard_uses_sync_service
+test_readability_guard_uses_asset_sync_service
 test_signal_requeues_processing_job_and_releases_lock \
 	"TERM" "143" "16161616-1616-4616-8616-161616161616"
 test_signal_requeues_processing_job_and_releases_lock \
@@ -889,7 +917,8 @@ test_revalidation_case "forbidden" 1 "WARNING" 403
 test_revalidation_request_contract
 test_revalidation_failure_is_non_fatal
 test_manual_revalidation_only_calls_endpoint
-test_asset_commands_use_sync_contract
+test_asset_commands_use_dedicated_asset_sync_contract
+test_database_sync_uses_sync_contract
 test_asset_http_smoke_contract
 test_zero_asset_smoke_is_explicitly_skipped
 test_publication_pipeline_case "success" "cccccccc-cccc-4ccc-8ccc-cccccccccccc" \

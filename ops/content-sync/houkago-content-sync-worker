@@ -233,8 +233,8 @@ verify_checkout_readable() {
 	(
 		cd "$SERVER_ROOT" || exit 1
 		run_compose \
-			--profile sync \
-			run --rm --no-deps -T --entrypoint /bin/sh sync -eu -c '
+			--profile asset-sync \
+			run --rm --no-deps -T --entrypoint /bin/sh asset-sync -eu -c '
 				root="${HOUKAGO_RESYNC_POSTS_ROOT:?}"
 				if [ ! -d "$root" ] || [ ! -x "$root" ]; then
 					printf "HOUKAGO_UNREADABLE_PATH=.\n"
@@ -351,6 +351,7 @@ run_one_shot_sync() {
 	local sync_log sync_status
 
 	sync_log="$(mktemp "${TEMPORARY_DIRECTORY}/sync-${delivery_id}.XXXXXX.log")" || return 1
+	log "phase=db_sync status=STARTED service=sync deliveryId=${delivery_id} commitSha=${checkout_head}"
 	(
 		cd "$SERVER_ROOT" || exit 1
 		HOUKAGO_RESYNC_COMMIT_HASH="$checkout_head" run_compose \
@@ -367,6 +368,7 @@ run_one_shot_sync() {
 	fi
 
 	rm -f -- "$sync_log"
+	log "phase=db_sync status=SUCCESS service=sync deliveryId=${delivery_id} commitSha=${checkout_head}"
 	return 0
 }
 
@@ -382,16 +384,15 @@ run_asset_stage() {
 	local asset_log stage_status success_line
 
 	asset_log="$(mktemp "${TEMPORARY_DIRECTORY}/asset-stage-${delivery_id}.XXXXXX.log")" || return 1
-	log "phase=asset_stage status=STARTED deliveryId=${delivery_id} commitSha=${checkout_head} generation=${checkout_head}"
+	log "phase=asset_stage status=STARTED service=asset-sync deliveryId=${delivery_id} commitSha=${checkout_head} generation=${checkout_head}"
 	(
 		cd "$SERVER_ROOT" || exit 1
 		run_compose \
-			--profile sync \
+			--profile asset-sync \
 			run --rm \
-			-e SPRING_PROFILES_ACTIVE=docker,asset-sync \
 			-e HOUKAGO_ASSET_PUBLICATION_ACTION=stage \
 			-e HOUKAGO_ASSET_PUBLICATION_GENERATION_ID="$checkout_head" \
-			sync
+			asset-sync
 	) 2>&1 | tee "$asset_log"
 	stage_status=${PIPESTATUS[0]}
 
@@ -422,7 +423,7 @@ run_asset_stage() {
 		return 1
 	fi
 
-	log "phase=asset_stage status=SUCCESS deliveryId=${delivery_id} commitSha=${checkout_head} generation=${checkout_head} publicPostCount=${ASSET_PUBLIC_POST_COUNT} assetCount=${ASSET_COUNT} totalBytes=${ASSET_TOTAL_BYTES}"
+	log "phase=asset_stage status=SUCCESS service=asset-sync deliveryId=${delivery_id} commitSha=${checkout_head} generation=${checkout_head} publicPostCount=${ASSET_PUBLIC_POST_COUNT} assetCount=${ASSET_COUNT} totalBytes=${ASSET_TOTAL_BYTES}"
 	return 0
 }
 
@@ -432,16 +433,15 @@ run_asset_activate() {
 	local asset_log activate_status
 
 	asset_log="$(mktemp "${TEMPORARY_DIRECTORY}/asset-activate-${delivery_id}.XXXXXX.log")" || return 1
-	log "phase=asset_activate status=STARTED deliveryId=${delivery_id} commitSha=${checkout_head} generation=${checkout_head}"
+	log "phase=asset_activate status=STARTED service=asset-sync deliveryId=${delivery_id} commitSha=${checkout_head} generation=${checkout_head}"
 	(
 		cd "$SERVER_ROOT" || exit 1
 		run_compose \
-			--profile sync \
+			--profile asset-sync \
 			run --rm \
-			-e SPRING_PROFILES_ACTIVE=docker,asset-sync \
 			-e HOUKAGO_ASSET_PUBLICATION_ACTION=activate \
 			-e HOUKAGO_ASSET_PUBLICATION_GENERATION_ID="$checkout_head" \
-			sync
+			asset-sync
 	) 2>&1 | tee "$asset_log"
 	activate_status=${PIPESTATUS[0]}
 
@@ -454,7 +454,7 @@ run_asset_activate() {
 	fi
 
 	rm -f -- "$asset_log"
-	log "phase=asset_activate status=SUCCESS deliveryId=${delivery_id} commitSha=${checkout_head} generation=${checkout_head}"
+	log "phase=asset_activate status=SUCCESS service=asset-sync deliveryId=${delivery_id} commitSha=${checkout_head} generation=${checkout_head}"
 	return 0
 }
 

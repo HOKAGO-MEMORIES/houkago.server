@@ -88,8 +88,10 @@ and read-only posts mount as the always-on app. It publishes no port and has no 
 Flyway is disabled in one-shot mode so the always-on app remains the migration owner; run the
 one-shot only after the deployed app has established the expected schema.
 
-The same ephemeral `sync` service also provides the manual public asset snapshot boundary. The app
-does not mount the public asset root. Set the generation to the verified posts revision for each run:
+The dedicated ephemeral `asset-sync` service provides the manual public asset snapshot boundary.
+It has no MySQL dependency, DB environment, or container network. The app and DB-backed `sync`
+service do not mount the public asset root. Set the generation to the verified posts revision for
+each run:
 
 ```bash
 HOUKAGO_ASSET_PUBLICATION_GENERATION_ID=<posts-commit-sha> \
@@ -97,10 +99,9 @@ docker compose \
   --env-file /opt/houkago/env/server.env \
   --env-file /opt/houkago/env/backend-release.env \
   -f compose.prod.yml \
-  --profile sync \
+  --profile asset-sync \
   run --rm \
-  -e SPRING_PROFILES_ACTIVE=docker,asset-sync \
-  sync
+  asset-sync
 ```
 
 The default `publish` action stages and validates a published-only full snapshot under
