@@ -360,9 +360,31 @@ grace, but a short 502 window remains possible; this is not a zero-downtime depl
 The systemd path/service and worker sources live in `ops/systemd` and `ops/backend-deploy`. The
 Production path is enabled and the service remains an idle oneshot when the queue is empty. Verified
 APP_ONLY `main` revisions flow from Backend CI through immutable ARM64 image publication to this
-endpoint. OPS_ONLY and NO_PRODUCTION_IMPACT revisions stop after CI, while APP_AND_OPS and
-CONTROL_PLANE revisions are blocked from automatic Production deployment. Ops reconciliation is not
-automated until CD2.
+endpoint. NO_PRODUCTION_IMPACT revisions stop after CI, while APP_AND_OPS and CONTROL_PLANE revisions
+remain blocked from automatic Production deployment.
+
+## OCI Ops Reconcile Worker
+
+Verified OPS_ONLY `main` revisions use a separate capability and release state:
+
+```text
+Backend CI classification artifact
+-> POST /internal/deployments/ops
+-> /opt/houkago/deploy-jobs/ops
+-> houkago-ops-reconcile.path
+-> root-owned allowlisted reconcile
+-> /opt/houkago/ops-state/current.json and previous.json
+```
+
+The Worker verifies full-SHA main ancestry, FF-only host checkout, managed-file drift and the shared
+maintenance lock before staging and validating allowlisted operations files. It backs up affected live
+files before atomic install and restores them without advancing ops state when validation or install
+fails. The managed Production descriptor is `/opt/houkago/runtime/compose.prod.yml`; all Worker Compose
+calls pin project name `server` so moving the descriptor does not change container names or networks.
+
+Normal OPS_ONLY reconcile does not publish an image, recreate `app`, or restart MySQL. Production E2E
+verified request acceptance, Worker success, current/previous ops state, installed hashes, empty active
+queues, and unchanged app/MySQL container IDs and restart counts.
 
 ## Verification
 
@@ -380,7 +402,6 @@ The repository integration test requires Docker because it starts a MySQL Testco
 ## Not Implemented Yet
 
 - automatic Git commit hash lookup
-- Production ops reconciliation for OPS_ONLY changes
 - coordinated Production rollout for APP_AND_OPS changes
 - blue/green or multi-app zero-downtime deployment
 
