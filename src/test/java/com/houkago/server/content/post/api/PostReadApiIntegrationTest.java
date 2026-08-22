@@ -623,6 +623,99 @@ class PostReadApiIntegrationTest {
 		assertThat(root.path("assetBaseUrl").asText())
 				.isEqualTo("https://assets.example.test/assets/posts/detail-post/");
 		assertThat(textValues(root.path("tags"))).containsExactly("java", "spring");
+		assertThat(root.path("platform").isNull()).isTrue();
+		assertThat(root.path("problemId").isNull()).isTrue();
+		assertThat(root.path("newerPost").isNull()).isTrue();
+		assertThat(root.path("olderPost").isNull()).isTrue();
+	}
+
+	@Test
+	void algorithmDetailReturnsCanonicalProblemMetadata() throws Exception {
+		repository.save(PostReadModelTestFixture.withProblemMetadata(
+				publicPost("boj-2342", LocalDate.of(2026, 7, 4), "## Dance Dance Revolution"),
+				"boj",
+				"2342"));
+
+		ResponseEntity<String> response = restTemplate.getForEntity("/api/posts/boj-2342", String.class);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode root = objectMapper.readTree(response.getBody());
+		assertThat(root.path("platform").asText()).isEqualTo("boj");
+		assertThat(root.path("problemId").asText()).isEqualTo("2342");
+	}
+
+	@Test
+	void detailNavigationUsesCanonicalPublicOrderAndBoundaries() throws Exception {
+		repository.save(publicPost("oldest-post", LocalDate.of(2026, 7, 1), "oldest body"));
+		repository.save(publicPost("middle-post", LocalDate.of(2026, 7, 2), "middle body"));
+		repository.save(publicPost("newest-post", LocalDate.of(2026, 7, 3), "newest body"));
+
+		JsonNode newest = detail("newest-post");
+		JsonNode middle = detail("middle-post");
+		JsonNode oldest = detail("oldest-post");
+
+		assertThat(newest.path("newerPost").isNull()).isTrue();
+		assertThat(newest.path("olderPost").path("slug").asText()).isEqualTo("middle-post");
+		assertThat(middle.path("newerPost").path("slug").asText()).isEqualTo("newest-post");
+		assertThat(middle.path("olderPost").path("slug").asText()).isEqualTo("oldest-post");
+		assertThat(middle.path("newerPost").path("title").asText()).isEqualTo("Post newest-post");
+		assertThat(middle.path("olderPost").path("postDate").asText()).isEqualTo("2026-07-01");
+		assertThat(oldest.path("newerPost").path("slug").asText()).isEqualTo("middle-post");
+		assertThat(oldest.path("olderPost").isNull()).isTrue();
+	}
+
+	@Test
+	void detailNavigationUsesIdDescendingAsTheSameDateTieBreak() throws Exception {
+		PostReadModel oldestId = repository.save(publicPost("same-date-oldest-id",
+				LocalDate.of(2026, 7, 4), "oldest id body"));
+		PostReadModel middleId = repository.save(publicPost("same-date-middle-id",
+				LocalDate.of(2026, 7, 4), "middle id body"));
+		PostReadModel newestId = repository.save(publicPost("same-date-newest-id",
+				LocalDate.of(2026, 7, 4), "newest id body"));
+		assertThat(oldestId.getId()).isLessThan(middleId.getId());
+		assertThat(middleId.getId()).isLessThan(newestId.getId());
+
+		JsonNode middle = detail("same-date-middle-id");
+
+		assertThat(middle.path("newerPost").path("slug").asText()).isEqualTo("same-date-newest-id");
+		assertThat(middle.path("olderPost").path("slug").asText()).isEqualTo("same-date-oldest-id");
+	}
+
+	@Test
+	void detailNavigationExcludesNonPublicAndInactivePosts() throws Exception {
+		repository.save(publicPost("public-older", LocalDate.of(2026, 7, 1), "public older body"));
+		repository.save(post("private-neighbor", LocalDate.of(2026, 7, 4), PostSourceStatus.PUBLISHED,
+				PostSyncStatus.ACTIVE, PostVisibility.PRIVATE));
+		repository.save(post("draft-neighbor", LocalDate.of(2026, 7, 3), PostSourceStatus.DRAFT,
+				PostSyncStatus.ACTIVE, PostVisibility.PRIVATE));
+		repository.save(post("deleted-neighbor", LocalDate.of(2026, 7, 2), PostSourceStatus.PUBLISHED,
+				PostSyncStatus.DELETED, PostVisibility.PRIVATE));
+		repository.save(publicPost("current-post", LocalDate.of(2026, 7, 5), "current body"));
+
+		JsonNode current = detail("current-post");
+
+		assertThat(current.path("olderPost").path("slug").asText()).isEqualTo("public-older");
+		assertThat(current.path("newerPost").isNull()).isTrue();
+	}
+
+	@Test
+	void navigationQueriesUseMinimalProjectionsWithoutRawBody() throws Exception {
+		for (String methodName : List.of("findClosestOlderPublicPost", "findClosestNewerPublicPost")) {
+			Method method = PostReadModelRepository.class.getDeclaredMethod(
+					methodName,
+					LocalDate.class,
+					Long.class,
+					PostSourceStatus.class,
+					PostSyncStatus.class,
+					PostVisibility.class,
+					org.springframework.data.domain.Pageable.class);
+			Query query = method.getAnnotation(Query.class);
+			String selectClause = query.value().substring(0, query.value().indexOf("from PostReadModel"));
+
+			assertThat(query.value()).contains("PostReadNavigationProjection");
+			assertThat(selectClause).contains("p.slug", "p.title", "p.postDate")
+					.doesNotContain("rawBody", "raw_body");
+		}
 	}
 
 	@Test
@@ -651,6 +744,12 @@ class PostReadApiIntegrationTest {
 				.isEqualTo(HttpStatus.NOT_FOUND);
 		assertThat(restTemplate.getForEntity("/api/posts/deleted-post", String.class).getStatusCode())
 				.isEqualTo(HttpStatus.NOT_FOUND);
+	}
+
+	private JsonNode detail(String slug) throws Exception {
+		ResponseEntity<String> response = restTemplate.getForEntity("/api/posts/{slug}", String.class, slug);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		return objectMapper.readTree(response.getBody());
 	}
 
 	private PostReadModel publicPost(String slug, LocalDate postDate, String rawBody) {

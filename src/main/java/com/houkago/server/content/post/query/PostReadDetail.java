@@ -14,7 +14,11 @@ public record PostReadDetail(
 		String thumbnail,
 		String series,
 		boolean featured,
-		String rawBody) {
+		String platform,
+		String problemId,
+		String rawBody,
+		PostReadNavigationItem newerPost,
+		PostReadNavigationItem olderPost) {
 
 	public PostReadDetail {
 		tags = tags == null ? List.of() : List.copyOf(tags);

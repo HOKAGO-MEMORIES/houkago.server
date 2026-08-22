@@ -16,6 +16,7 @@ import org.springframework.web.server.ResponseStatusException;
 import com.houkago.server.content.post.asset.PostPublicAssetUrl;
 import com.houkago.server.content.post.query.PostReadDetail;
 import com.houkago.server.content.post.query.PostReadListItem;
+import com.houkago.server.content.post.query.PostReadNavigationItem;
 import com.houkago.server.content.post.query.PostReadService;
 
 @RestController
@@ -82,8 +83,19 @@ public class PostReadController {
 				post.thumbnail(),
 				post.series(),
 				post.featured(),
+				post.platform(),
+				post.problemId(),
 				post.rawBody(),
-				publicAssetUrl.baseUrl(post.slug()));
+				publicAssetUrl.baseUrl(post.slug()),
+				toNavigationResponse(post.newerPost()),
+				toNavigationResponse(post.olderPost()));
+	}
+
+	private static PostNavigationResponse toNavigationResponse(PostReadNavigationItem post) {
+		if (post == null) {
+			return null;
+		}
+		return new PostNavigationResponse(post.slug(), post.title(), post.postDate());
 	}
 
 	private static List<String> copyTags(List<String> tags) {

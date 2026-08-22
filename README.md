@@ -134,7 +134,9 @@ GET /api/posts/{slug}
 ```
 
 `GET /api/posts` returns paginated post summaries without `rawBody`. `GET /api/posts/{slug}` returns
-one public post detail with `rawBody`.
+one public post detail with `rawBody`, `assetBaseUrl`, nullable canonical `platform`/`problemId`, and
+nullable minimal `newerPost`/`olderPost` navigation. Adjacent posts use the same global public
+`postDate DESC, id DESC` order and projection queries that do not select another body.
 
 Deleted rows are excluded from public list/detail APIs.
 

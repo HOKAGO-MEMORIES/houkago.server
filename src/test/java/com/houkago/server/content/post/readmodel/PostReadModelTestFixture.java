@@ -40,4 +40,10 @@ public final class PostReadModelTestFixture {
 		post.setTagsJson(TAGS_JSON_CODEC.encode(Arrays.asList(tags)));
 		return post;
 	}
+
+	public static PostReadModel withProblemMetadata(PostReadModel post, String platform, String problemId) {
+		post.setPlatform(platform);
+		post.setProblemId(problemId);
+		return post;
+	}
 }

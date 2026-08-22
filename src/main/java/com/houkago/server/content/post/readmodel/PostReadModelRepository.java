@@ -1,5 +1,6 @@
 package com.houkago.server.content.post.readmodel;
 
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -91,4 +92,46 @@ public interface PostReadModelRepository extends JpaRepository<PostReadModel, Lo
 			PostSourceStatus sourceStatus,
 			PostSyncStatus syncStatus,
 			PostVisibility visibility);
+
+	@Query("""
+			select new com.houkago.server.content.post.readmodel.PostReadNavigationProjection(
+				p.slug,
+				p.title,
+				p.postDate
+			)
+			from PostReadModel p
+			where p.sourceStatus = :sourceStatus
+			and p.syncStatus = :syncStatus
+			and p.visibility = :visibility
+			and (p.postDate < :postDate or (p.postDate = :postDate and p.id < :id))
+			order by p.postDate desc, p.id desc
+			""")
+	List<PostReadNavigationProjection> findClosestOlderPublicPost(
+			LocalDate postDate,
+			Long id,
+			PostSourceStatus sourceStatus,
+			PostSyncStatus syncStatus,
+			PostVisibility visibility,
+			Pageable pageable);
+
+	@Query("""
+			select new com.houkago.server.content.post.readmodel.PostReadNavigationProjection(
+				p.slug,
+				p.title,
+				p.postDate
+			)
+			from PostReadModel p
+			where p.sourceStatus = :sourceStatus
+			and p.syncStatus = :syncStatus
+			and p.visibility = :visibility
+			and (p.postDate > :postDate or (p.postDate = :postDate and p.id > :id))
+			order by p.postDate asc, p.id asc
+			""")
+	List<PostReadNavigationProjection> findClosestNewerPublicPost(
+			LocalDate postDate,
+			Long id,
+			PostSourceStatus sourceStatus,
+			PostSyncStatus syncStatus,
+			PostVisibility visibility,
+			Pageable pageable);
 }

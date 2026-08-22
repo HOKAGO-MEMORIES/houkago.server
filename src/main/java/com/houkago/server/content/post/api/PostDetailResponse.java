@@ -14,6 +14,10 @@ public record PostDetailResponse(
 		String thumbnail,
 		String series,
 		boolean featured,
+		String platform,
+		String problemId,
 		String rawBody,
-		String assetBaseUrl) {
+		String assetBaseUrl,
+		PostNavigationResponse newerPost,
+		PostNavigationResponse olderPost) {
 }

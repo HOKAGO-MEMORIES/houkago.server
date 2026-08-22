@@ -15,6 +15,7 @@ import com.houkago.server.content.post.policy.PostSyncStatus;
 import com.houkago.server.content.post.policy.PostVisibility;
 import com.houkago.server.content.post.readmodel.PostReadModel;
 import com.houkago.server.content.post.readmodel.PostReadModelRepository;
+import com.houkago.server.content.post.readmodel.PostReadNavigationProjection;
 import com.houkago.server.content.post.readmodel.PostReadSummaryProjection;
 import com.houkago.server.content.post.readmodel.PostTagsJsonCodec;
 
@@ -25,6 +26,7 @@ public class PostReadService {
 	private static final int DEFAULT_PAGE = 0;
 	private static final int DEFAULT_SIZE = 20;
 	private static final int MAX_SIZE = 50;
+	private static final Pageable SINGLE_RESULT = PageRequest.of(0, 1);
 	private final PostReadModelRepository repository;
 	private final PostTagsJsonCodec tagsJsonCodec;
 
@@ -82,6 +84,29 @@ public class PostReadService {
 	}
 
 	private PostReadDetail toDetail(PostReadModel post) {
+		PostReadNavigationItem olderPost = repository.findClosestOlderPublicPost(
+				post.getPostDate(),
+				post.getId(),
+				PostSourceStatus.PUBLISHED,
+				PostSyncStatus.ACTIVE,
+				PostVisibility.PUBLIC,
+				SINGLE_RESULT)
+				.stream()
+				.findFirst()
+				.map(this::toNavigationItem)
+				.orElse(null);
+		PostReadNavigationItem newerPost = repository.findClosestNewerPublicPost(
+				post.getPostDate(),
+				post.getId(),
+				PostSourceStatus.PUBLISHED,
+				PostSyncStatus.ACTIVE,
+				PostVisibility.PUBLIC,
+				SINGLE_RESULT)
+				.stream()
+				.findFirst()
+				.map(this::toNavigationItem)
+				.orElse(null);
+
 		return new PostReadDetail(
 				post.getSlug(),
 				post.getTitle(),
@@ -93,7 +118,15 @@ public class PostReadService {
 				post.getThumbnail(),
 				post.getSeries(),
 				post.isFeatured(),
-				post.getRawBody());
+				post.getPlatform(),
+				post.getProblemId(),
+				post.getRawBody(),
+				newerPost,
+				olderPost);
+	}
+
+	private PostReadNavigationItem toNavigationItem(PostReadNavigationProjection post) {
+		return new PostReadNavigationItem(post.slug(), post.title(), post.postDate());
 	}
 
 	private static int normalizePage(Integer page) {
